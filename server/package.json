@@ -1,0 +1,21 @@
+{
+  "name": "formal-methods-analyzer-server",
+  "version": "0.1.0",
+  "description": "Backend for Formal Methods Program Analyzer",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "nodemon src/index.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "dependencies": {
+    "body-parser": "^1.20.2",
+    "cors": "^2.8.5",
+    "express": "^4.18.2",
+    "formal-methods-analyzer-server": "file:",
+    "z3-solver": "^4.14.1"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.1"
+  }
+}
