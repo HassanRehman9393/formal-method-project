@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>API Tester</title>
+    <style>
+        body { font-family: Arial, sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; }
+        h1 { color: #333; }
+        h2 { color: #555; }
+        textarea { width: 100%; height: 150px; margin: 10px 0; padding: 8px; }
+        button { background: #4CAF50; color: white; border: none; padding: 10px 15px; cursor: pointer; }
+        button:hover { background: #45a049; }
+        .response { background: #f1f1f1; padding: 15px; border-radius: 5px; margin-top: 15px; white-space: pre-wrap; }
+    </style>
+</head>
+<body>
+    <h1>Formal Methods Program Analyzer API Tester</h1>
+    
+    <h2>Test Verification API</h2>
+    <textarea id="verify-program">x := 5;
+y := 10;
+z := x + y;
+assert(z == 15);</textarea>
+    <div>Loop Unrolling Depth: <input type="number" id="verify-depth" value="3" min="0" max="10"></div>
+    <button onclick="testVerify()">Test Verify API</button>
+    <div class="response" id="verify-response"></div>
+    
+    <h2>Test Equivalence API</h2>
+    <div>Program 1:</div>
+    <textarea id="equiv-program1">x := 10;
+y := 5;
+z := x - y;</textarea>
+    <div>Program 2:</div>
+    <textarea id="equiv-program2">a := 10;
+b := 5;
+c := a - b;</textarea>
+    <div>Loop Unrolling Depth: <input type="number" id="equiv-depth" value="3" min="0" max="10"></div>
+    <button onclick="testEquivalence()">Test Equivalence API</button>
+    <div class="response" id="equiv-response"></div>
+    
+    <h2>Test Parse API</h2>
+    <textarea id="parse-program">x := 5;
+if (x > 0) {
+  y := x + 1;
+} else {
+  y := x - 1;
+}</textarea>
+    <button onclick="testParse()">Test Parse API</button>
+    <div class="response" id="parse-response"></div>
+
+    <script>
+        const API_BASE_URL = 'http://localhost:5000/api';
+        
+        async function testVerify() {
+            const program = document.getElementById('verify-program').value;
+            const depth = parseInt(document.getElementById('verify-depth').value);
+            const responseDiv = document.getElementById('verify-response');
+            
+            responseDiv.textContent = 'Sending request...';
+            
+            try {
+                const response = await fetch(`${API_BASE_URL}/verify`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ program, loopUnrollingDepth: depth })
+                });
+                
+                const data = await response.json();
+                responseDiv.textContent = JSON.stringify(data, null, 2);
+            } catch (error) {
+                responseDiv.textContent = `Error: ${error.message}`;
+            }
+        }
+        
+        async function testEquivalence() {
+            const program1 = document.getElementById('equiv-program1').value;
+            const program2 = document.getElementById('equiv-program2').value;
+            const depth = parseInt(document.getElementById('equiv-depth').value);
+            const responseDiv = document.getElementById('equiv-response');
+            
+            responseDiv.textContent = 'Sending request...';
+            
+            try {
+                const response = await fetch(`${API_BASE_URL}/equivalence`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ program1, program2, loopUnrollingDepth: depth })
+                });
+                
+                const data = await response.json();
+                responseDiv.textContent = JSON.stringify(data, null, 2);
+            } catch (error) {
+                responseDiv.textContent = `Error: ${error.message}`;
+            }
+        }
+        
+        async function testParse() {
+            const program = document.getElementById('parse-program').value;
+            const responseDiv = document.getElementById('parse-response');
+            
+            responseDiv.textContent = 'Sending request...';
+            
+            try {
+                const response = await fetch(`${API_BASE_URL}/parse`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ program })
+                });
+                
+                const data = await response.json();
+                responseDiv.textContent = JSON.stringify(data, null, 2);
+            } catch (error) {
+                responseDiv.textContent = `Error: ${error.message}`;
+            }
+        }
+    </script>
+</body>
+</html>

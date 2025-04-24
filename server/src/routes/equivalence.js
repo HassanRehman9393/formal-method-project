@@ -1,25 +1,27 @@
 const express = require('express');
 const router = express.Router();
+const z3Service = require('../services/z3Service');
 
 /**
  * @route POST /api/equivalence
  * @description Check if two programs are semantically equivalent
  * @access Public
  */
-router.post('/', (req, res) => {
+router.post('/', async (req, res) => {
   try {
-    // Placeholder for equivalence checking logic
-    // Will be implemented in future tasks
-    res.json({ 
-      success: true, 
-      message: 'Equivalence checking endpoint placeholder',
-      equivalent: true,
-      // Sample response structure
-      results: {
-        isEquivalent: true,
-        counterexample: null
-      }
-    });
+    const { program1, program2 } = req.body;
+    
+    if (!program1 || !program2) {
+      return res.status(400).json({ 
+        success: false, 
+        message: 'Two programs are required for equivalence checking' 
+      });
+    }
+    
+    // Call the Z3 service to check equivalence
+    const result = await z3Service.checkEquivalence(program1, program2);
+    
+    res.json(result);
   } catch (error) {
     res.status(400).json({ success: false, message: error.message });
   }

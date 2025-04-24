@@ -1,22 +1,26 @@
 {
-  "name": "formal-methods-analyzer-server",
-  "version": "0.1.0",
-  "description": "Backend for Formal Methods Program Analyzer",
+  "name": "formal-methods-program-analyzer-server",
+  "version": "1.0.0",
+  "description": "Backend server for Formal Methods Program Analyzer",
   "main": "src/index.js",
   "scripts": {
     "start": "node src/index.js",
     "dev": "nodemon src/index.js",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "node tests/api-test.js",
+    "test:api": "node tests/api-test.js",
+    "test:smt": "node tests/smt-test.js"
   },
   "dependencies": {
-    "body-parse": "^0.1.0",
-    "body-parser": "^1.20.3",
+    "axios": "^1.4.0",
+    "body-parser": "^1.20.2",
     "cors": "^2.8.5",
-    "express": "^4.21.2",
-    "formal-methods-analyzer-server": "file:",
-    "z3-solver": "^4.14.1"
+    "express": "^4.18.2",
+    "z3-solver": "^4.12.1"
   },
   "devDependencies": {
-    "nodemon": "^3.0.1"
+    "nodemon": "^2.0.22"
+  },
+  "engines": {
+    "node": ">=14.0.0"
   }
 }
