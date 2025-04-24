@@ -10,7 +10,12 @@
     "preview": "vite preview",
     "test": "node src/lib/parser/test-parser.js",
     "test:comprehensive": "node src/lib/parser/test-comprehensive.js",
-    "test:edge-cases": "node src/lib/parser/test-edge-cases.js"
+    "test:edge-cases": "node src/lib/parser/test-edge-cases.js",
+    "test:ssa": "node --experimental-modules --trace-warnings src/lib/ssa/run-tests.js",
+    "test:integration": "node --experimental-modules --trace-warnings src/lib/ssa/integration-test.js",
+    "test:loop": "node --experimental-modules --trace-warnings src/lib/ssa/test-loop.js",
+    "test:ssa-all": "node --experimental-modules --trace-warnings src/lib/ssa/test-ssa.js && node --experimental-modules --trace-warnings src/lib/ssa/test-loop.js",
+    "test:optimizations": "node --experimental-modules --trace-warnings src/lib/optimizer/test-optimizations.js"
   },
   "dependencies": {
     "@codemirror/lang-javascript": "^6.2.3",
