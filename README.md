@@ -73,6 +73,13 @@ If you have a script set up in the root package.json, you can run:
 pnpm dev
 ```
 
+### Running Tests
+To run the parser tests:
+```bash
+cd client
+pnpm test
+```
+
 ## Project Structure
 
 ```
@@ -96,6 +103,20 @@ The tool supports a custom mini-language with the following features:
 - For loops: `for (init; condition; update) { ... }`
 - Arrays: `arr[i] := value;`
 - Assert statements: `assert(condition);`
+
+## Parser Development
+The parser uses PEG.js to parse our custom mini-language. The grammar is defined in `client/src/lib/parser/grammar.pegjs`.
+
+To install PEG.js:
+```bash
+cd client
+pnpm add pegjs
+```
+
+Current features implemented in the parser:
+- Variable declarations and assignments
+- Arithmetic and boolean expressions 
+- Array access
 
 ## License
 

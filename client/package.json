@@ -7,7 +7,10 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test": "node src/lib/parser/test-parser.js",
+    "test:comprehensive": "node src/lib/parser/test-comprehensive.js",
+    "test:edge-cases": "node src/lib/parser/test-edge-cases.js"
   },
   "dependencies": {
     "@codemirror/lang-javascript": "^6.2.3",
@@ -51,6 +54,7 @@
     "input-otp": "^1.4.2",
     "lucide-react": "^0.503.0",
     "next-themes": "^0.4.6",
+    "pegjs": "^0.10.0",
     "react": "^19.0.0",
     "react-day-picker": "8.10.1",
     "react-dom": "^19.0.0",
