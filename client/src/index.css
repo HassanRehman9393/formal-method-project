@@ -138,3 +138,186 @@
     @apply bg-background text-foreground;
   }
 }
+
+/* CodeMirror error highlighting */
+.cm-error-underline {
+  text-decoration: wavy underline #f56565;
+  text-decoration-skip-ink: none;
+}
+
+.cm-error-line {
+  background-color: rgba(245, 101, 101, 0.1);
+}
+
+/* Program structure visualization */
+.structure-node {
+  display: flex;
+  align-items: center;
+  padding: 2px 0;
+  transition: background-color 0.2s;
+}
+
+.structure-node:hover {
+  background-color: rgba(0, 0, 0, 0.05);
+}
+
+/* SSA specific styling */
+.ssa-phi {
+  color: #8b5cf6; /* purple-500 */
+  font-weight: 500;
+}
+
+.ssa-var {
+  color: #2563eb; /* blue-600 */
+}
+
+.ssa-label {
+  color: #059669; /* emerald-600 */
+  font-weight: 500;
+}
+
+.ssa-goto {
+  color: #b91c1c; /* red-700 */
+  font-weight: 500;
+}
+
+.ssa-optimized {
+  background-color: rgba(16, 185, 129, 0.1); /* emerald-500 with opacity */
+}
+
+.ssa-removed {
+  text-decoration: line-through;
+  color: #ef4444; /* red-500 */
+}
+
+/* Side-by-side view styling */
+.side-by-side-container {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+}
+
+.ssa-block-highlight {
+  background-color: rgba(96, 165, 250, 0.1); /* blue-400 with opacity */
+  border-radius: 0.25rem;
+  padding: 0.25rem;
+}
+
+/* SMT-LIB syntax highlighting */
+.cm-keyword {
+  color: #8b5cf6; /* purple-500 */
+  font-weight: 500;
+}
+
+.cm-operator {
+  color: #d97706; /* amber-600 */
+}
+
+.cm-type {
+  color: #059669; /* emerald-600 */
+  font-weight: 500;
+}
+
+.cm-variable {
+  color: #2563eb; /* blue-600 */
+}
+
+.cm-number {
+  color: #dc2626; /* red-600 */
+}
+
+.cm-comment {
+  color: #6b7280; /* gray-500 */
+  font-style: italic;
+}
+
+.cm-string {
+  color: #047857; /* emerald-700 */
+}
+
+.cm-bracket {
+  color: #1f2937; /* gray-800 */
+  font-weight: 400;
+}
+
+/* Control flow graph styling */
+.cfg-node {
+  fill: white;
+  stroke: #4b5563;
+  stroke-width: 1.5;
+  rx: 5;
+  ry: 5;
+}
+
+.cfg-node-text {
+  font-size: 12px;
+  text-anchor: middle;
+  dominant-baseline: middle;
+  pointer-events: none;
+}
+
+.cfg-edge {
+  stroke: #4b5563;
+  stroke-width: 1.5;
+}
+
+.cfg-edge-arrow {
+  fill: #4b5563;
+}
+
+.cfg-node.highlighted {
+  stroke: #3b82f6;
+  stroke-width: 2;
+}
+
+.cfg-edge.highlighted {
+  stroke: #3b82f6;
+  stroke-width: 2;
+}
+
+.cfg-edge-arrow.highlighted {
+  fill: #3b82f6;
+}
+
+/* Results visualization styling */
+.verification-success {
+  background-color: rgba(34, 197, 94, 0.1);
+  border-left: 4px solid #22c55e;
+}
+
+.verification-failure {
+  background-color: rgba(239, 68, 68, 0.1);
+  border-left: 4px solid #ef4444;
+}
+
+.counterexample-table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+}
+
+.counterexample-table th,
+.counterexample-table td {
+  padding: 0.5rem;
+  border: 1px solid #e5e7eb;
+}
+
+.counterexample-table thead th {
+  background-color: #f9fafb;
+  font-weight: 600;
+}
+
+.counterexample-table tbody tr:nth-child(even) {
+  background-color: #f9fafb;
+}
+
+.counterexample-table tbody tr:hover {
+  background-color: rgba(59, 130, 246, 0.05);
+}
+
+/* Responsive design adjustments */
+@media (max-width: 640px) {
+  .side-by-side-container {
+    grid-template-columns: 1fr;
+  }
+}
