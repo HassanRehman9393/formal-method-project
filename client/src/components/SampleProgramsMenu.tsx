@@ -9,7 +9,7 @@ import {
 } from "./ui/dropdown-menu";
 import { Button } from "./ui/button";
 import { BookOpen } from "lucide-react";
-import { ProgramSample, getSampleByCategory, getEquivalencePrograms } from "../lib/samples";
+import { ProgramSample, getSampleByCategory } from "../lib/samples";
 
 interface SampleProgramsMenuProps {
   onSelectProgram: (code: string) => void;

@@ -6,7 +6,7 @@
 export interface CFGNode {
   id: string;
   label: string;
-  type: 'entry' | 'exit' | 'statement' | 'condition' | 'join';
+  type: 'entry' | 'exit' | 'statement' | 'condition' | 'join' | 'assert';
   code: string;
   line?: number;
   inPaths?: string[];

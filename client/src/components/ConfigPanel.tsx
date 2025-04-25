@@ -9,10 +9,8 @@ import {
   Settings, 
   CheckCircle2, 
   GitCompare, 
-  Infinity, 
   Play 
 } from "lucide-react";
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "./ui/tooltip";
 import { DocTooltip } from "./ui/doc-tooltip";
 
 interface ConfigPanelProps {
