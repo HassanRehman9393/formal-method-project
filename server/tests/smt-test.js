@@ -141,6 +141,148 @@ async function testASTConversion() {
 }
 
 /**
+ * Test array handling in SMT
+ */
+async function testArrayHandling() {
+  console.log('\n=== Testing Array Handling in SMT ===');
+  
+  // Test array declaration
+  const arrayDecl = smtLibGenerator.generateArrayDeclaration('arr', 'Int', 'Int');
+  console.log('Array declaration:', arrayDecl);
+  
+  // Test array select (read)
+  const arrayRead = smtLibGenerator.generateArraySelect('arr', 0);
+  console.log('Array read:', arrayRead);
+  
+  // Test array store (write)
+  const arrayStore = smtLibGenerator.generateArrayStore('arr', 'i', 42);
+  console.log('Array store:', arrayStore);
+  
+  // Test array assignment
+  const arrayAssign = smtLibGenerator.generateArrayAssignment('arr', 'i', 42);
+  console.log('Array assignment:', arrayAssign);
+  
+  // Test generating a complete script with arrays
+  const program = {
+    variables: [
+      { name: 'i', type: 'Int' }
+    ],
+    arrays: [
+      { name: 'arr', indexType: 'Int', elementType: 'Int' }
+    ],
+    assignments: [
+      { name: 'i', value: 0 }
+    ],
+    arrayOperations: [
+      { type: 'write', array: 'arr', index: 0, value: 5 }
+    ],
+    assertions: [
+      smtLibGenerator.generateComparison('==', smtLibGenerator.generateArraySelect('arr', 0), 5)
+    ]
+  };
+  
+  const script = smtGenerationService.generateSMTScript(program);
+  console.log('Generated SMT script with arrays:');
+  console.log(script);
+  
+  return true;
+}
+
+/**
+ * Test control flow handling in SMT
+ */
+async function testControlFlow() {
+  console.log('\n=== Testing Control Flow Handling in SMT ===');
+  
+  // Test if-then-else expression
+  const ite = smtLibGenerator.generateITE('(> x 0)', 'x', '(- x)');
+  console.log('If-then-else:', ite);
+  
+  // Test loop invariant
+  const invariant = smtLibGenerator.generateLoopInvariant('(>= i 0)');
+  console.log('Loop invariant:', invariant);
+  
+  // Test loop unrolling step
+  const unrolling = smtLibGenerator.generateLoopUnrolling('(< i n)', ['(= i (+ i 1))'], 1);
+  console.log('Loop unrolling step:', unrolling);
+  
+  // Test mock AST with control flow
+  const mockControlFlowAST = {
+    type: 'Program',
+    body: [
+      {
+        type: 'VariableDeclaration',
+        id: { type: 'Identifier', name: 'i' },
+        init: { type: 'Literal', value: 0 }
+      },
+      {
+        type: 'VariableDeclaration',
+        id: { type: 'Identifier', name: 'max' },
+        init: { type: 'Literal', value: 5 }
+      },
+      {
+        type: 'WhileStatement',
+        condition: {
+          type: 'BinaryExpression',
+          operator: '<',
+          left: { type: 'Identifier', name: 'i' },
+          right: { type: 'Identifier', name: 'max' }
+        },
+        body: {
+          type: 'BlockStatement',
+          body: [
+            {
+              type: 'AssignmentStatement',
+              left: { type: 'Identifier', name: 'i' },
+              right: {
+                type: 'BinaryExpression',
+                operator: '+',
+                left: { type: 'Identifier', name: 'i' },
+                right: { type: 'Literal', value: 1 }
+              }
+            },
+          ]
+        },
+        invariant: {
+          type: 'LoopInvariant',
+          expression: {
+            type: 'BinaryExpression',
+            operator: '>=',
+            left: { type: 'Identifier', name: 'i' },
+            right: { type: 'Literal', value: 0 }
+          }
+        }
+      },
+      {
+        type: 'AssertStatement',
+        expression: {
+          type: 'BinaryExpression',
+          operator: '==',
+          left: { type: 'Identifier', name: 'i' },
+          right: { type: 'Identifier', name: 'max' }
+        }
+      }
+    ]
+  };
+  
+  try {
+    const result = smtGenerationService.generateConstraints(mockControlFlowAST, { loopUnrollDepth: 5 });
+    
+    if (result.success) {
+      console.log('Generated SMT script for control flow:');
+      console.log(result.smtScript);
+      return true;
+    } else {
+      console.error('Failed to generate SMT for control flow:', result.error);
+      return false;
+    }
+  } catch (error) {
+    console.error('Error testing control flow:', error);
+    return false;
+  }
+}
+
+/**
  * Run all tests
  */
 async function runTests() {
@@ -150,7 +292,9 @@ async function runTests() {
     basicSMT: await testBasicSMT(),
     completeScript: await testCompleteScript(),
     examples: await testExamples(),
-    astConversion: await testASTConversion()
+    astConversion: await testASTConversion(),
+    arrayHandling: await testArrayHandling(),
+    controlFlow: await testControlFlow()
   };
   
   console.log('\n=== Test Results Summary ===');

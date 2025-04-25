@@ -1,26 +1,24 @@
 {
-  "name": "formal-methods-program-analyzer-server",
-  "version": "1.0.0",
-  "description": "Backend server for Formal Methods Program Analyzer",
+  "name": "formal-methods-analyzer-server",
+  "version": "0.1.0",
+  "description": "Backend server for the Formal Methods Program Analyzer",
   "main": "src/index.js",
   "scripts": {
     "start": "node src/index.js",
     "dev": "nodemon src/index.js",
-    "test": "node tests/api-test.js",
-    "test:api": "node tests/api-test.js",
-    "test:smt": "node tests/smt-test.js"
+    "test": "node tests/verification-test.js",
+    "test:verification": "node tests/verification-test.js",
+    "test:equivalence": "node tests/comprehensive-equivalence-test.js",
+    "test:all": "npm run test:verification && npm run test:equivalence"
   },
   "dependencies": {
-    "axios": "^1.4.0",
     "body-parser": "^1.20.2",
     "cors": "^2.8.5",
+    "dotenv": "^16.3.1",
     "express": "^4.18.2",
     "z3-solver": "^4.12.1"
   },
   "devDependencies": {
-    "nodemon": "^2.0.22"
-  },
-  "engines": {
-    "node": ">=14.0.0"
+    "nodemon": "^3.0.1"
   }
 }
