@@ -20,6 +20,7 @@ export interface ErrorDetails {
 export interface Counterexample {
   inputs: Record<string, any>;
   outputs?: Record<string, any>;
+  path?: string[];
   trace?: Array<{
     line: number;
     state: Record<string, any>;
@@ -73,6 +74,12 @@ interface VerificationContextType {
   
   // Performance metrics (for UI feedback)
   executionTime: number | null;
+
+  // Add these properties if they don't exist:
+  ast1: any;
+  ast2: any;
+  ssaAst1: any;
+  ssaAst2: any;
 }
 
 // Create the context with undefined initial value
@@ -378,6 +385,12 @@ export const VerificationProvider: React.FC<VerificationProviderProps> = ({ chil
     runVerification,
     resetResults,
     clearError,
+
+    // Add these properties if they don't exist:
+    ast1: null,
+    ast2: null,
+    ssaAst1: null,
+    ssaAst2: null,
   };
   
   return (

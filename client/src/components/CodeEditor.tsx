@@ -1,11 +1,12 @@
-import React, { useEffect } from 'react';
+import React from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
 import CodeMirror from '@uiw/react-codemirror';
 import { javascript } from '@codemirror/lang-javascript';
-import { Play, RefreshCw } from 'lucide-react';
+import { Play, RefreshCw, Info } from 'lucide-react';
 import { Button } from './ui/button';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './ui/tooltip';
 import { EditorView, Decoration } from '@codemirror/view';
+import { Badge } from './ui/badge';
 
 interface ParseError {
   message: string;
@@ -16,29 +17,23 @@ interface ParseError {
 
 interface CodeEditorProps {
   title: string;
-  code: string;
+  value: string;
   onChange: (code: string) => void;
-  onParse: () => void;
+  placeholder?: string;
+  onParse?: () => void;
   parseErrors?: ParseError[];
   isProcessing?: boolean;
 }
 
 const CodeEditor: React.FC<CodeEditorProps> = ({
   title,
-  code,
+  value,
   onChange,
+  placeholder = "",
   onParse,
   parseErrors = [],
   isProcessing = false,
 }) => {
-  // Create error markers for CodeMirror
-  const errorMarkers = parseErrors.map(error => ({
-    from: { line: error.line - 1, ch: error.column - 1 },
-    to: { line: error.line - 1, ch: error.column + 1 },
-    message: error.message,
-    severity: 'error',
-  }));
-
   // Custom extension for error highlighting
   const errorHighlighting = React.useMemo(() => {
     return [
@@ -48,7 +43,7 @@ const CodeEditor: React.FC<CodeEditorProps> = ({
         
         const decorations = parseErrors.flatMap(error => {
           const line = error.line - 1;
-          const lineText = view.state.doc.line(line + 1).text;
+          if (line < 0 || line >= view.state.doc.lines) return [];
           
           const startPos = view.state.doc.line(line + 1).from + Math.max(0, error.column - 1);
           const endPos = Math.min(
@@ -74,9 +69,16 @@ const CodeEditor: React.FC<CodeEditorProps> = ({
   }, [parseErrors]);
 
   return (
-    <Card className="w-full">
+    <Card className="w-full h-full flex flex-col">
       <CardHeader className="flex flex-row items-center justify-between py-3">
-        <CardTitle className="text-xl font-bold">{title}</CardTitle>
+        <div className="flex items-center">
+          <CardTitle className="text-xl font-bold">{title}</CardTitle>
+          {parseErrors.length > 0 && (
+            <Badge variant="destructive" className="ml-2">
+              {parseErrors.length} error{parseErrors.length > 1 ? 's' : ''}
+            </Badge>
+          )}
+        </div>
         <div className="flex space-x-2">
           <TooltipProvider>
             <Tooltip>
@@ -85,58 +87,90 @@ const CodeEditor: React.FC<CodeEditorProps> = ({
                   onClick={() => onChange('')} 
                   variant="outline" 
                   size="sm"
+                  className="h-8 w-8 p-0"
                 >
                   <RefreshCw className="h-4 w-4" />
                 </Button>
               </TooltipTrigger>
               <TooltipContent>
-                <p>Clear</p>
+                <p>Clear code</p>
               </TooltipContent>
             </Tooltip>
           </TooltipProvider>
-          <TooltipProvider>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button 
-                  onClick={onParse} 
-                  variant="default" 
-                  size="sm"
-                  disabled={isProcessing}
-                >
-                  {isProcessing ? (
-                    <div className="flex items-center space-x-1">
-                      <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-white"></div>
-                      <span>Parsing...</span>
-                    </div>
-                  ) : (
-                    <>
-                      <Play className="h-4 w-4 mr-1" />
-                      Parse
-                    </>
-                  )}
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>
-                <p>Parse code</p>
-              </TooltipContent>
-            </Tooltip>
-          </TooltipProvider>
+          
+          {onParse && (
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button 
+                    onClick={onParse} 
+                    variant="default" 
+                    size="sm"
+                    disabled={isProcessing}
+                  >
+                    {isProcessing ? (
+                      <div className="flex items-center space-x-1">
+                        <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-white"></div>
+                        <span>Parsing...</span>
+                      </div>
+                    ) : (
+                      <>
+                        <Play className="h-4 w-4 mr-1" />
+                        Parse
+                      </>
+                    )}
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>
+                  <p>Parse code (Ctrl+Enter)</p>
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+          )}
         </div>
       </CardHeader>
-      <CardContent>
-        <div className="relative">
+      
+      <CardContent className="flex-1 pb-6">
+        <div className="relative h-full flex flex-col">
           <CodeMirror
-            value={code}
-            height="300px"
-            extensions={[javascript(), EditorView.lineWrapping]}
+            value={value}
+            height="100%"
+            minHeight="300px"
+            extensions={[errorHighlighting, EditorView.lineWrapping]}
             onChange={onChange}
-            className="border rounded"
+            className="border rounded flex-1"
             theme="light"
+            placeholder={placeholder}
           />
+          
           {parseErrors.length > 0 && (
-            <div className="absolute bottom-2 right-2 bg-red-100 text-red-800 text-xs px-2 py-1 rounded">
-              {parseErrors.length} error{parseErrors.length > 1 ? 's' : ''}
-            </div>
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <div className="absolute bottom-2 right-2 bg-red-100 text-red-800 text-xs px-2 py-1 rounded flex items-center cursor-help">
+                    <Info className="h-3 w-3 mr-1" />
+                    {parseErrors.length} error{parseErrors.length > 1 ? 's' : ''}
+                  </div>
+                </TooltipTrigger>
+                <TooltipContent>
+                  <div className="max-h-[200px] overflow-y-auto">
+                    <p className="font-semibold mb-1">Parse Errors:</p>
+                    <ul className="list-disc pl-4">
+                      {parseErrors.slice(0, 5).map((error, idx) => (
+                        <li key={idx} className="text-xs">
+                          Line {error.line}, Col {error.column}: {error.message}
+                        </li>
+                      ))}
+                      {parseErrors.length > 5 && (
+                        <li className="text-xs font-italic">
+                          ...and {parseErrors.length - 5} more errors
+                        </li>
+                      )}
+                    </ul>
+                  </div>
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
           )}
         </div>
       </CardContent>

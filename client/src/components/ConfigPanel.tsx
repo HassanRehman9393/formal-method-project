@@ -13,6 +13,7 @@ import {
   Play 
 } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "./ui/tooltip";
+import { DocTooltip } from "./ui/doc-tooltip";
 
 interface ConfigPanelProps {
   mode: 'verification' | 'equivalence';
@@ -42,14 +43,26 @@ const ConfigPanel: React.FC<ConfigPanelProps> = ({
 
       <CardContent className="space-y-6">
         <div className="space-y-3">
-          <Label htmlFor="mode" className="text-sm font-medium">
-            Analysis Mode
-          </Label>
+          <div className="flex items-center justify-between">
+            <Label htmlFor="mode" className="text-sm font-medium">
+              Analysis Mode
+            </Label>
+            
+            <DocTooltip
+              content={
+                <div className="space-y-2">
+                  <p><strong>Verification Mode:</strong> Check assertions within a single program</p>
+                  <p><strong>Equivalence Mode:</strong> Check if two programs produce the same outputs for all inputs</p>
+                </div>
+              }
+            />
+          </div>
+          
           <Select 
             value={mode} 
             onValueChange={(value) => onModeChange(value as 'verification' | 'equivalence')}
           >
-            <SelectTrigger className="w-full">
+            <SelectTrigger className="w-full" id="mode">
               <SelectValue placeholder="Select mode" />
             </SelectTrigger>
             <SelectContent>
@@ -81,22 +94,18 @@ const ConfigPanel: React.FC<ConfigPanelProps> = ({
             <Label htmlFor="loopUnrollingDepth" className="text-sm font-medium">
               Loop Unrolling Depth
             </Label>
-            <TooltipProvider>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <div className="rounded-full bg-muted flex items-center justify-center h-5 w-5">
-                    <Infinity className="h-3 w-3 text-muted-foreground" />
-                  </div>
-                </TooltipTrigger>
-                <TooltipContent side="top">
-                  <p className="max-w-xs text-xs">
-                    Maximum number of iterations to unroll loops for verification. 
-                    Higher values increase analysis precision but may slow down verification.
-                  </p>
-                </TooltipContent>
-              </Tooltip>
-            </TooltipProvider>
+            
+            <DocTooltip
+              content={
+                <div className="space-y-2">
+                  <p>Maximum number of times loops will be unrolled during analysis.</p>
+                  <p>Higher values can find deeper bugs but may slow down verification.</p>
+                  <p>Recommended range: 3-10 for most programs.</p>
+                </div>
+              }
+            />
           </div>
+          
           <Input 
             id="loopUnrollingDepth"
             type="number"
@@ -106,6 +115,11 @@ const ConfigPanel: React.FC<ConfigPanelProps> = ({
             onChange={(e) => onLoopUnrollingDepthChange(parseInt(e.target.value) || 1)}
             className="h-9"
           />
+          <div className="text-xs text-muted-foreground flex items-center justify-between">
+            <span>Min: 1</span>
+            <span>Recommended: 5-10</span>
+            <span>Max: 100</span>
+          </div>
         </div>
 
         <Button 
@@ -125,6 +139,13 @@ const ConfigPanel: React.FC<ConfigPanelProps> = ({
             </>
           )}
         </Button>
+        
+        <div className="text-xs text-muted-foreground text-center">
+          <kbd className="inline-flex h-5 select-none items-center gap-1 rounded border bg-muted px-1.5 font-mono text-xs font-medium">
+            Ctrl+Enter
+          </kbd>
+          <span className="ml-1">to run verification</span>
+        </div>
       </CardContent>
     </Card>
   );

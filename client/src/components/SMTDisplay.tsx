@@ -1,102 +1,121 @@
-import React, { useState } from 'react';
-import CodeMirror from '@uiw/react-codemirror';
+import React from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
+import { Badge } from './ui/badge';
 import { Button } from './ui/button';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
-import { Clipboard, Check, AlertCircle } from 'lucide-react';
-import { Alert, AlertDescription, AlertTitle } from './ui/alert';
-
-// Custom language mode for SMT-LIB syntax highlighting
+import { Copy } from 'lucide-react';
+import { LoadingState } from './ui/loading-state';
+import CodeMirror from '@uiw/react-codemirror';
+import { EditorView } from '@codemirror/view';
 import { StreamLanguage } from '@codemirror/language';
-import { smt2 } from './custom/smt2-lang';
 
-interface SMTDisplayProps {
-  smtConstraints: string;
-  isLoading: boolean;
-  error?: string;
+// Simple language definition for SMT-LIB2
+const smtLibLanguage = StreamLanguage.define({
+  name: 'smtlib2',
+  token(stream) { // Removed the unused 'state' parameter
+    if (stream.eatSpace()) return null;
+    
+    // Comments
+    if (stream.match(';')) {
+      stream.skipToEnd();
+      return 'comment';
+    }
+    
+    // Strings
+    if (stream.match(/"([^"\\]|\\.)*"/)) return 'string';
+    
+    // Keywords
+    if (stream.match(/(declare-const|declare-fun|assert|check-sat|get-model|set-logic|define-fun)/)) {
+      return 'keyword';
+    }
+    
+    // Types
+    if (stream.match(/(Int|Bool|Real|Array)/)) return 'type';
+    
+    // Operators
+    if (stream.match(/[\+\-\*\/=<>!&|]+/)) return 'operator';
+    
+    // Parentheses
+    if (stream.match(/[\(\)]/)) return 'bracket';
+    
+    // Numbers
+    if (stream.match(/\d+(\.\d+)?/)) return 'number';
+    
+    // Default for other tokens
+    stream.next();
+    return null;
+  },
+  startState() {
+    return {};
+  }
+});
+
+export interface SMTDisplayProps {
+  smtCode: string;
+  isLoading?: boolean;
+  constraintsCount?: number;
 }
 
-const SMTDisplay: React.FC<SMTDisplayProps> = ({
-  smtConstraints,
-  isLoading,
-  error,
+const SMTDisplay: React.FC<SMTDisplayProps> = ({ 
+  smtCode, 
+  isLoading = false,
+  constraintsCount 
 }) => {
-  const [copied, setCopied] = useState<boolean>(false);
-  const [activeTab, setActiveTab] = useState<string>('formatted');
-
-  const handleCopy = async () => {
-    try {
-      await navigator.clipboard.writeText(smtConstraints);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    } catch (err) {
-      console.error('Failed to copy text: ', err);
-    }
+  const copyToClipboard = () => {
+    navigator.clipboard.writeText(smtCode);
   };
 
   return (
     <Card className="w-full">
-      <CardHeader className="flex flex-row items-center justify-between py-3">
-        <CardTitle>SMT Constraints</CardTitle>
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={handleCopy}
-          disabled={!smtConstraints || isLoading}
-        >
-          {copied ? (
-            <>
-              <Check className="mr-2 h-4 w-4" />
-              Copied
-            </>
-          ) : (
-            <>
-              <Clipboard className="mr-2 h-4 w-4" />
-              Copy
-            </>
+      <CardHeader className="pb-2">
+        <div className="flex justify-between items-center">
+          <CardTitle className="flex items-center">
+            SMT-LIB2 Constraints
+          </CardTitle>
+          {constraintsCount !== undefined && (
+            <Badge variant="outline">
+              {constraintsCount} constraints
+            </Badge>
           )}
-        </Button>
+        </div>
       </CardHeader>
       <CardContent>
         {isLoading ? (
-          <div className="flex justify-center p-4">
-            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-700"></div>
-          </div>
-        ) : error ? (
-          <Alert variant="destructive">
-            <AlertCircle className="h-4 w-4" />
-            <AlertTitle>Error</AlertTitle>
-            <AlertDescription>{error}</AlertDescription>
-          </Alert>
-        ) : !smtConstraints ? (
-          <div className="text-center p-4 text-gray-500">
-            No SMT constraints available. Please verify a program first.
+          <LoadingState message="Generating SMT constraints..." />
+        ) : smtCode ? (
+          <div className="space-y-4">
+            <div className="flex justify-end">
+              <Button 
+                variant="outline" 
+                size="sm" 
+                onClick={copyToClipboard}
+                className="flex items-center"
+              >
+                <Copy className="h-4 w-4 mr-1" />
+                Copy to clipboard
+              </Button>
+            </div>
+            <div className="border rounded-md overflow-hidden bg-muted">
+              <CodeMirror
+                value={smtCode}
+                height="400px"
+                readOnly={true}
+                extensions={[
+                  smtLibLanguage,
+                  EditorView.lineWrapping
+                ]}
+                theme="light"
+                className="text-sm font-mono"
+              />
+            </div>
+            <p className="text-sm text-muted-foreground">
+              These SMT-LIB2 constraints are generated based on the program logic and are used by the Z3 solver to verify the program's correctness.
+            </p>
           </div>
         ) : (
-          <Tabs value={activeTab} onValueChange={setActiveTab}>
-            <TabsList>
-              <TabsTrigger value="formatted">Formatted</TabsTrigger>
-              <TabsTrigger value="raw">Raw</TabsTrigger>
-            </TabsList>
-            <TabsContent value="formatted" className="mt-2">
-              <div className="bg-gray-50 rounded-md overflow-auto">
-                <CodeMirror
-                  value={smtConstraints}
-                  height="300px"
-                  extensions={[StreamLanguage.define(smt2)]}
-                  editable={false}
-                  className="text-sm"
-                />
-              </div>
-            </TabsContent>
-            <TabsContent value="raw" className="mt-2">
-              <div className="bg-gray-50 rounded-md overflow-auto">
-                <pre className="p-4 text-sm font-mono whitespace-pre-wrap">
-                  {smtConstraints}
-                </pre>
-              </div>
-            </TabsContent>
-          </Tabs>
+          <div className="text-center p-8 text-muted-foreground">
+            No SMT constraints generated yet. 
+            Run verification to see the constraints.
+          </div>
         )}
       </CardContent>
     </Card>

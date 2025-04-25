@@ -1,156 +1,158 @@
-import React from "react";
-import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
-import { Alert, AlertDescription, AlertTitle } from "./ui/alert";
-import { 
-  CheckCircle2, 
-  XCircle, 
-  AlertCircle, 
-  Clock, 
-  FileJson, 
-  Eye
-} from "lucide-react";
-import { Badge } from "./ui/badge";
-import { Button } from "./ui/button";
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "./ui/collapsible";
-import { ScrollArea } from "./ui/scroll-area";
+import React from 'react';
+import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
+import { Alert, AlertDescription, AlertTitle } from './ui/alert';
+import { Badge } from './ui/badge';
+import { Separator } from './ui/separator';
+import { CheckCircle, AlertTriangle, XCircle, Clock } from 'lucide-react';
+import { ResultStatus } from '../contexts/VerificationContext';
 
-type ResultStatus = 'success' | 'failure' | 'error' | 'pending' | null;
+interface CounterexampleTrace {
+  line: number;
+  state: Record<string, any>;
+}
 
-interface ResultViewProps {
+interface Counterexample {
+  inputs: Record<string, any>;
+  outputs?: Record<string, any>;
+  path?: string[];
+  trace?: CounterexampleTrace[];
+}
+
+export interface ResultViewProps {
   status: ResultStatus;
-  message?: string;
-  counterexample?: Record<string, any>;
-  executionTime?: number;
+  message: string;
+  counterexample?: Counterexample;
+  executionTime: number;
 }
 
 const ResultView: React.FC<ResultViewProps> = ({
   status,
-  message = "",
+  message,
   counterexample,
-  executionTime = 0,
+  executionTime,
 }) => {
-  const [isOpen, setIsOpen] = React.useState(false);
-
-  if (status === null) {
-    return (
-      <Card className="border border-border/40 shadow-sm">
-        <CardHeader className="pb-2">
-          <div className="flex items-center space-x-2">
-            <AlertCircle className="h-4 w-4 text-muted-foreground" />
-            <CardTitle className="text-lg font-medium">Results</CardTitle>
-          </div>
-        </CardHeader>
-        <CardContent>
-          <div className="flex flex-col items-center justify-center p-8 text-center">
-            <div className="rounded-full bg-muted p-3 mb-4">
-              <Eye className="h-6 w-6 text-muted-foreground" />
-            </div>
-            <p className="text-muted-foreground">Run verification to see results</p>
-          </div>
-        </CardContent>
-      </Card>
-    );
-  }
-
-  if (status === 'pending') {
-    return (
-      <Card className="border border-border/40 shadow-sm">
-        <CardHeader className="pb-2">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center space-x-2">
-              <Clock className="h-4 w-4 text-muted-foreground" />
-              <CardTitle className="text-lg font-medium">Processing...</CardTitle>
-            </div>
-            <Badge variant="outline" className="text-xs">Analyzing</Badge>
-          </div>
-        </CardHeader>
-        <CardContent>
-          <div className="flex flex-col items-center justify-center p-8">
-            <div className="flex items-center justify-center mb-4">
-              <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary"></div>
-            </div>
-            <p className="text-muted-foreground">Performing verification analysis</p>
-          </div>
-        </CardContent>
-      </Card>
-    );
-  }
-
-  const statusConfig = {
-    success: {
-      icon: <CheckCircle2 className="h-5 w-5 text-green-500" />,
-      title: "Verification Successful",
-      badge: <Badge className="bg-green-500/20 text-green-700 hover:bg-green-500/20 border-0">Valid</Badge>,
-      alertClass: "border-green-500/40 bg-green-500/10 text-green-700"
-    },
-    failure: {
-      icon: <XCircle className="h-5 w-5 text-red-500" />,
-      title: "Verification Failed",
-      badge: <Badge className="bg-red-500/20 text-red-700 hover:bg-red-500/20 border-0">Invalid</Badge>,
-      alertClass: "border-red-500/40 bg-red-500/10 text-red-700"
-    },
-    error: {
-      icon: <AlertCircle className="h-5 w-5 text-amber-500" />,
-      title: "Error",
-      badge: <Badge className="bg-amber-500/20 text-amber-700 hover:bg-amber-500/20 border-0">Error</Badge>,
-      alertClass: "border-amber-500/40 bg-amber-500/10 text-amber-700"
+  // Icon and alert variant based on status
+  const getStatusConfig = () => {
+    switch (status) {
+      case 'success':
+        return {
+          icon: <CheckCircle className="h-5 w-5 text-green-500" />,
+          variant: 'default',
+          title: 'Verification Successful',
+          badgeClass: 'bg-green-100 text-green-800',
+          badgeText: 'Success',
+        };
+      case 'failure':
+        return {
+          icon: <AlertTriangle className="h-5 w-5 text-amber-500" />,
+          variant: 'warning',
+          title: 'Verification Failed',
+          badgeClass: 'bg-amber-100 text-amber-800',
+          badgeText: 'Failed',
+        };
+      case 'error':
+        return {
+          icon: <XCircle className="h-5 w-5 text-red-500" />,
+          variant: 'destructive',
+          title: 'Error Occurred',
+          badgeClass: 'bg-red-100 text-red-800',
+          badgeText: 'Error',
+        };
+      default:
+        return {
+          icon: <Clock className="h-5 w-5 text-gray-500" />,
+          variant: 'default',
+          title: 'No Results',
+          badgeClass: 'bg-gray-100 text-gray-800',
+          badgeText: 'Pending',
+        };
     }
   };
 
-  const currentStatus = statusConfig[status];
+  const statusConfig = getStatusConfig();
+
+  // Format execution time nicely
+  const formattedTime = executionTime > 1000 
+    ? `${(executionTime / 1000).toFixed(2)} seconds` 
+    : `${executionTime} milliseconds`;
 
   return (
-    <Card className="border border-border/40 shadow-sm">
+    <Card>
       <CardHeader className="pb-2">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center space-x-2">
-            {currentStatus.icon}
-            <CardTitle className="text-lg font-medium">{currentStatus.title}</CardTitle>
-          </div>
-          <div className="flex items-center space-x-2">
-            {currentStatus.badge}
-            {executionTime > 0 && (
-              <Badge variant="outline" className="text-xs">
-                {executionTime}ms
-              </Badge>
-            )}
-          </div>
+        <div className="flex justify-between items-center">
+          <CardTitle className="flex items-center">
+            {statusConfig.icon}
+            <span className="ml-2">{statusConfig.title}</span>
+          </CardTitle>
+          <Badge className={statusConfig.badgeClass}>
+            {statusConfig.badgeText}
+          </Badge>
         </div>
       </CardHeader>
-      <CardContent className="space-y-4">
-        <Alert className={currentStatus.alertClass}>
-          <AlertTitle className="mb-1 flex items-center gap-2">
-            {currentStatus.icon}
-            <span>{currentStatus.title}</span>
-          </AlertTitle>
-          <AlertDescription className="text-sm">{message}</AlertDescription>
+      <CardContent>
+        {/* Main message */}
+        <Alert variant={statusConfig.variant as any}>
+          <AlertTitle>Result</AlertTitle>
+          <AlertDescription>{message}</AlertDescription>
         </Alert>
 
+        {/* Execution time */}
+        <div className="mt-4 text-sm text-muted-foreground flex items-center">
+          <Clock className="h-4 w-4 mr-1" />
+          Execution time: {formattedTime}
+        </div>
+
+        {/* Counterexample section */}
         {counterexample && (
-          <Collapsible 
-            open={isOpen} 
-            onOpenChange={setIsOpen}
-            className="border rounded-md overflow-hidden"
-          >
-            <div className="flex items-center justify-between p-3 bg-muted/50">
-              <div className="flex items-center space-x-2 text-sm font-medium">
-                <FileJson className="h-4 w-4 text-muted-foreground" />
-                <span>Counterexample</span>
-              </div>
-              <CollapsibleTrigger asChild>
-                <Button variant="ghost" size="sm">
-                  {isOpen ? "Hide details" : "Show details"}
-                </Button>
-              </CollapsibleTrigger>
-            </div>
-            <CollapsibleContent>
-              <ScrollArea className="max-h-[200px]">
-                <pre className="bg-muted/30 text-xs p-3 overflow-auto m-0">
-                  {JSON.stringify(counterexample, null, 2)}
+          <div className="mt-4">
+            <Separator className="my-4" />
+            <h4 className="font-medium mb-2">Counterexample</h4>
+            
+            {/* Input values */}
+            <div className="mb-3">
+              <h5 className="text-sm font-medium text-muted-foreground mb-1">Inputs:</h5>
+              <div className="bg-muted p-2 rounded overflow-x-auto">
+                <pre className="text-xs">
+                  {JSON.stringify(counterexample.inputs, null, 2)}
                 </pre>
-              </ScrollArea>
-            </CollapsibleContent>
-          </Collapsible>
+              </div>
+            </div>
+            
+            {/* Output values if they exist */}
+            {counterexample.outputs && (
+              <div className="mb-3">
+                <h5 className="text-sm font-medium text-muted-foreground mb-1">Outputs:</h5>
+                <div className="bg-muted p-2 rounded overflow-x-auto">
+                  <pre className="text-xs">
+                    {JSON.stringify(counterexample.outputs, null, 2)}
+                  </pre>
+                </div>
+              </div>
+            )}
+            
+            {/* Execution trace if it exists */}
+            {counterexample.trace && counterexample.trace.length > 0 && (
+              <div>
+                <h5 className="text-sm font-medium text-muted-foreground mb-1">Execution Trace:</h5>
+                <div className="border rounded divide-y">
+                  <div className="grid grid-cols-4 bg-muted p-2 text-xs font-medium">
+                    <div>Step</div>
+                    <div>Line</div>
+                    <div className="col-span-2">State</div>
+                  </div>
+                  {counterexample.trace.map((step, index) => (
+                    <div key={index} className="grid grid-cols-4 p-2 text-xs">
+                      <div>{index + 1}</div>
+                      <div>{step.line}</div>
+                      <div className="col-span-2 overflow-x-auto">
+                        <pre>{JSON.stringify(step.state, null, 2)}</pre>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
         )}
       </CardContent>
     </Card>
