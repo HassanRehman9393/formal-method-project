@@ -1,7 +1,7 @@
 /**
  * SSA Graph Builder
  * 
- * Creates a graph representation of SSA-form programs for optimization
+ * Creates a graph representation of SSA programs for analysis
  */
 
 /**
@@ -266,98 +266,228 @@ class SSAGraph {
 }
 
 /**
- * Build an SSA graph from an SSA program
- * @param {object} ssaProgram - The SSA program to analyze
- * @returns {SSAGraph} The constructed SSA graph
+ * Creates a graph representation from an SSA program
+ * @param {object} ssaProgram - The SSA program
+ * @returns {object} Graph representation
  */
 export function buildSSAGraph(ssaProgram) {
   if (!ssaProgram || !ssaProgram.blocks || !Array.isArray(ssaProgram.blocks)) {
-    throw new Error('Invalid SSA program format');
+    return { nodes: new Map(), edges: new Map() };
   }
   
-  const graph = new SSAGraph();
+  const graph = {
+    nodes: new Map(),
+    edges: new Map(),
+    
+    /**
+     * Get predecessors of a node
+     * @param {string} nodeId - Node ID
+     * @returns {Array} Predecessor node IDs
+     */
+    getPredecessors(nodeId) {
+      const incoming = [];
+      
+      for (const [fromId, targets] of this.edges) {
+        if (targets.includes(nodeId)) {
+          incoming.push(fromId);
+        }
+      }
+      
+      return incoming;
+    },
+    
+    /**
+     * Get successors of a node
+     * @param {string} nodeId - Node ID
+     * @returns {Array} Successor node IDs
+     */
+    getSuccessors(nodeId) {
+      return Array.from(this.edges.get(nodeId) || []);
+    },
+    
+    /**
+     * Get entry nodes (those with no predecessors)
+     * @returns {Array} Entry node IDs
+     */
+    getEntryNodes() {
+      const entryNodes = [];
+      
+      for (const [nodeId] of this.nodes) {
+        if (this.getPredecessors(nodeId).length === 0) {
+          entryNodes.push(nodeId);
+        }
+      }
+      
+      return entryNodes;
+    },
+    
+    /**
+     * Get exit nodes (those with no successors)
+     * @returns {Array} Exit node IDs
+     */
+    getExitNodes() {
+      const exitNodes = [];
+      
+      for (const [nodeId] of this.nodes) {
+        if (this.getSuccessors(nodeId).length === 0) {
+          exitNodes.push(nodeId);
+        }
+      }
+      
+      return exitNodes;
+    },
+    
+    /**
+     * Get a topological ordering of nodes
+     * @returns {Array} Node IDs in topological order
+     */
+    getTopologicalOrder() {
+      const visited = new Set();
+      const result = [];
+      
+      function dfs(nodeId) {
+        if (visited.has(nodeId)) return;
+        visited.add(nodeId);
+        
+        const successors = graph.getSuccessors(nodeId);
+        for (const succ of successors) {
+          dfs(succ);
+        }
+        
+        result.unshift(nodeId); // Add to front for correct ordering
+      }
+      
+      // Start DFS from all entry nodes
+      for (const entry of this.getEntryNodes()) {
+        dfs(entry);
+      }
+      
+      // Handle any disconnected components
+      for (const [nodeId] of this.nodes) {
+        if (!visited.has(nodeId)) {
+          dfs(nodeId);
+        }
+      }
+      
+      return result;
+    },
+    
+    /**
+     * Calculate dominators for all nodes
+     * @returns {Map} Map of node IDs to sets of dominator node IDs
+     */
+    calculateDominators() {
+      const dom = new Map();
+      const allNodes = Array.from(this.nodes.keys());
+      const entries = this.getEntryNodes();
+      
+      if (entries.length === 0) return dom;
+      const entry = entries[0];
+      
+      // Initialize dominators
+      for (const node of allNodes) {
+        dom.set(node, new Set(allNodes));
+      }
+      
+      // Entry node is only dominated by itself
+      dom.set(entry, new Set([entry]));
+      
+      // Iterative algorithm to find dominators
+      let changed = true;
+      while (changed) {
+        changed = false;
+        
+        for (const node of allNodes) {
+          if (node === entry) continue;
+          
+          const preds = this.getPredecessors(node);
+          if (preds.length === 0) continue;
+          
+          // Start with all nodes
+          const newDom = new Set(allNodes);
+          
+          // Intersect with predecessors' dominators
+          for (const pred of preds) {
+            const predDom = dom.get(pred);
+            if (predDom) {
+              // Intersection
+              const intersection = new Set();
+              for (const d of newDom) {
+                if (predDom.has(d)) {
+                  intersection.add(d);
+                }
+              }
+              // Update newDom
+              newDom.clear();
+              for (const d of intersection) {
+                newDom.add(d);
+              }
+            }
+          }
+          
+          // Add the node itself
+          newDom.add(node);
+          
+          // Check if changed
+          const oldDom = dom.get(node);
+          if (oldDom && (oldDom.size !== newDom.size || 
+              !Array.from(newDom).every(d => oldDom.has(d)))) {
+            dom.set(node, newDom);
+            changed = true;
+          }
+        }
+      }
+      
+      return dom;
+    }
+  };
   
-  // First pass: create nodes and collect terminators
-  const terminators = new Map();
+  // Add nodes
   for (const block of ssaProgram.blocks) {
     if (!block || !block.label) continue;
     
-    const node = graph.getOrCreateNode(block.label);
+    // Create a node that represents this block
+    graph.nodes.set(block.label, {
+      ...block,
+      blockId: block.label,
+      instructions: [...block.instructions],
+      phiFunctions: block.phiFunctions || []
+    });
     
-    // Add instructions
-    if (block.instructions && Array.isArray(block.instructions)) {
-      for (const instr of block.instructions) {
-        if (instr) {
-          node.addInstruction(instr);
-          
-          // Track variable definitions
-          if (instr.type === 'Assignment' && instr.target) {
-            graph.addVariableDefinition(instr.target, instr, block.label);
-          }
-        }
+    // Initialize edges list
+    graph.edges.set(block.label, []);
+  }
+  
+  // Add edges based on terminators
+  for (const block of ssaProgram.blocks) {
+    if (!block || !block.label || !block.terminator) continue;
+    
+    const sourceId = block.label;
+    
+    if (block.terminator.type === 'Jump') {
+      const targetId = block.terminator.target;
+      if (targetId && graph.nodes.has(targetId)) {
+        const outEdges = graph.edges.get(sourceId) || [];
+        outEdges.push(targetId);
+        graph.edges.set(sourceId, outEdges);
       }
-    }
-    
-    // Add phi functions
-    if (block.phiFunctions && Array.isArray(block.phiFunctions)) {
-      for (const phi of block.phiFunctions) {
-        if (phi) {
-          node.addPhiFunction(phi);
-          
-          // Track variable definitions from phi functions
-          if (phi.target) {
-            graph.addVariableDefinition(phi.target, phi, block.label);
-          }
-        }
+    } else if (block.terminator.type === 'Branch') {
+      const thenTarget = block.terminator.thenTarget;
+      const elseTarget = block.terminator.elseTarget;
+      
+      const outEdges = graph.edges.get(sourceId) || [];
+      
+      if (thenTarget && graph.nodes.has(thenTarget)) {
+        outEdges.push(thenTarget);
       }
-    }
-    
-    // Track terminator for second pass
-    if (block.terminator) {
-      terminators.set(block.label, block.terminator);
-    }
-    
-    // Set entry node if this is the first block
-    if (!graph.entryNode && ssaProgram.blocks.indexOf(block) === 0) {
-      graph.setEntryNode(block.label);
-    }
-  }
-  
-  // Second pass: add edges based on terminators
-  for (const [blockId, terminator] of terminators.entries()) {
-    switch (terminator.type) {
-      case 'Jump':
-        if (terminator.target) {
-          graph.addEdge(blockId, terminator.target);
-        }
-        break;
       
-      case 'Branch':
-        if (terminator.thenTarget) {
-          graph.addEdge(blockId, terminator.thenTarget);
-        }
-        if (terminator.elseTarget) {
-          graph.addEdge(blockId, terminator.elseTarget);
-        }
-        break;
+      if (elseTarget && graph.nodes.has(elseTarget)) {
+        outEdges.push(elseTarget);
+      }
       
-      case 'Return':
-      case 'Unreachable':
-        graph.addExitNode(blockId);
-        break;
+      graph.edges.set(sourceId, outEdges);
     }
   }
-  
-  // Find nodes with no successors as exit nodes
-  for (const node of graph.getAllNodes()) {
-    if (node.successors.length === 0) {
-      graph.addExitNode(node.blockId);
-    }
-  }
-  
-  // Compute dominator information
-  graph.computeDominators();
-  graph.computeDominanceFrontiers();
   
   return graph;
 }

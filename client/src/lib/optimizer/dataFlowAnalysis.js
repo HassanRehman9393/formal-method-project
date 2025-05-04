@@ -1,12 +1,11 @@
 /**
  * Data Flow Analysis Framework
  * 
- * Provides a framework for forward and backward data flow analyses
- * that can be used by optimization passes
+ * A generic framework for performing data flow analysis on SSA programs
  */
 
 /**
- * Directions for data flow analysis
+ * Enum for data flow direction
  */
 export const DataFlowDirection = {
   FORWARD: 'forward',
@@ -14,227 +13,201 @@ export const DataFlowDirection = {
 };
 
 /**
- * Lattice join operations
+ * Enum for join operation types
  */
 export const JoinOperation = {
   UNION: 'union',
-  INTERSECTION: 'intersection'
+  INTERSECTION: 'intersection',
+  CUSTOM: 'custom'
 };
 
 /**
- * Base class for data flow analysis problems
+ * Abstract base class for data flow analysis
  */
-class DataFlowAnalysis {
-  constructor(direction, joinOp) {
+export class DataFlowAnalysis {
+  /**
+   * Create a new data flow analysis
+   * @param {string} direction - Direction of analysis (forward or backward)
+   * @param {string} joinOp - Type of join operation to use
+   */
+  constructor(direction = DataFlowDirection.FORWARD, joinOp = JoinOperation.UNION) {
     this.direction = direction;
-    this.joinOperation = joinOp;
+    this.joinOp = joinOp;
+    
+    // Default values for worklist algorithm
+    this.maxIterations = 100;
+    this.debug = false;
   }
   
   /**
-   * Get successor blocks for a given block
-   * @param {SSAGraphNode} node - Block to get successors for
-   * @param {SSAGraph} graph - The SSA graph
-   * @returns {SSAGraphNode[]} List of successor nodes
-   */
-  getSuccessors(node, graph) {
-    return node.successors.map(id => graph.nodes.get(id)).filter(Boolean);
-  }
-  
-  /**
-   * Get predecessor blocks for a given block
-   * @param {SSAGraphNode} node - Block to get predecessors for
-   * @param {SSAGraph} graph - The SSA graph
-   * @returns {SSAGraphNode[]} List of predecessor nodes
-   */
-  getPredecessors(node, graph) {
-    return node.predecessors.map(id => graph.nodes.get(id)).filter(Boolean);
-  }
-  
-  /**
-   * Get the appropriate adjacent nodes based on analysis direction
-   * @param {SSAGraphNode} node - Current node
-   * @param {SSAGraph} graph - SSA graph
-   * @returns {SSAGraphNode[]} Adjacent nodes
-   */
-  getAdjacentNodes(node, graph) {
-    return this.direction === DataFlowDirection.FORWARD ? 
-      this.getSuccessors(node, graph) : 
-      this.getPredecessors(node, graph);
-  }
-  
-  /**
-   * Initialize the data flow values for all nodes
-   * @param {SSAGraph} graph - The SSA graph
-   * @returns {Map} Map of block IDs to initial values
-   */
-  initialize(graph) {
-    const values = new Map();
-    for (const node of graph.getAllNodes()) {
-      values.set(node.blockId, this.initialValue(node));
-    }
-    return values;
-  }
-  
-  /**
-   * Merge values based on the join operation
-   * @param {Array} values - Values to merge
-   * @returns {*} Merged value
-   */
-  merge(values) {
-    if (!values || values.length === 0) return this.defaultValue();
-    
-    if (values.length === 1) return values[0];
-    
-    let result = values[0];
-    for (let i = 1; i < values.length; i++) {
-      result = this.join(result, values[i]);
-    }
-    
-    return result;
-  }
-  
-  /**
-   * Run the data flow analysis on the given graph
-   * @param {SSAGraph} graph - The SSA graph to analyze
-   * @returns {Map} Map of block IDs to final values
-   */
-  analyze(graph) {
-    if (!graph) throw new Error('No graph provided for analysis');
-    
-    let values = this.initialize(graph);
-    let changed = true;
-    const nodes = this.getProcessingOrder(graph);
-    
-    // Iterate until fixed point
-    while (changed) {
-      changed = false;
-      
-      for (const node of nodes) {
-        // Get input values from predecessors/successors
-        const adjacentNodes = this.getAdjacentNodes(node, graph);
-        const inputValues = adjacentNodes.map(n => values.get(n.blockId)).filter(Boolean);
-        
-        // Merge input values
-        const mergedValue = this.merge(inputValues);
-        
-        // Apply transfer function
-        const oldValue = values.get(node.blockId);
-        const newValue = this.transferFunction(node, mergedValue, graph);
-        
-        // Check if value changed
-        if (!this.equals(oldValue, newValue)) {
-          values.set(node.blockId, newValue);
-          changed = true;
-        }
-      }
-    }
-    
-    return values;
-  }
-  
-  /**
-   * Get the order in which nodes should be processed
-   * @param {SSAGraph} graph - The SSA graph
-   * @returns {SSAGraphNode[]} Ordered list of nodes to process
-   */
-  getProcessingOrder(graph) {
-    if (this.direction === DataFlowDirection.FORWARD) {
-      // Start from entry and follow successors
-      return this.getTopologicalOrder(graph);
-    } else {
-      // Start from exits and follow predecessors
-      return this.getTopologicalOrder(graph).reverse();
-    }
-  }
-  
-  /**
-   * Get a topological ordering of the graph nodes
-   * @param {SSAGraph} graph - The SSA graph
-   * @returns {SSAGraphNode[]} Topologically ordered nodes
-   */
-  getTopologicalOrder(graph) {
-    const visited = new Set();
-    const order = [];
-    
-    function visit(nodeId) {
-      if (visited.has(nodeId)) return;
-      visited.add(nodeId);
-      
-      const node = graph.nodes.get(nodeId);
-      if (!node) return;
-      
-      for (const succId of node.successors) {
-        visit(succId);
-      }
-      
-      order.unshift(node); // Add to front for topological order
-    }
-    
-    // Start from entry
-    if (graph.entryNode) {
-      visit(graph.entryNode.blockId);
-    }
-    
-    // Handle any disconnected nodes
-    for (const node of graph.getAllNodes()) {
-      if (!visited.has(node.blockId)) {
-        visit(node.blockId);
-      }
-    }
-    
-    return order;
-  }
-  
-  /**
-   * Override these methods in subclasses:
-   */
-  
-  /** 
-   * Initial value for a node
-   * @param {SSAGraphNode} node - The node to initialize
-   * @returns {*} Initial value
+   * Initial value for the data flow domain
+   * Override in subclasses
    */
   initialValue(node) {
-    return this.defaultValue();
+    throw new Error('initialValue must be implemented by subclass');
   }
   
   /**
-   * Default value for uninitialized nodes
-   * @returns {*} Default value
+   * Default value for nodes
+   * Override in subclasses
    */
   defaultValue() {
-    return null;
+    throw new Error('defaultValue must be implemented by subclass');
   }
   
   /**
-   * Join two values based on the join operation
+   * Join operation for combining values
+   * Override in subclasses
    * @param {*} val1 - First value
    * @param {*} val2 - Second value
    * @returns {*} Joined value
    */
   join(val1, val2) {
-    return val1; // Default does nothing
+    throw new Error('join must be implemented by subclass');
   }
   
   /**
-   * Apply the transfer function to a value
-   * @param {SSAGraphNode} node - Current node
-   * @param {*} value - Input value
-   * @param {SSAGraph} graph - SSA graph
+   * Transfer function for a node
+   * Override in subclasses
+   * @param {object} node - Current node
+   * @param {*} inValue - Input value
+   * @param {object} graph - The SSA graph
    * @returns {*} Output value
    */
-  transferFunction(node, value, graph) {
-    return value; // Default is identity function
+  transferFunction(node, inValue, graph) {
+    throw new Error('transferFunction must be implemented by subclass');
   }
   
   /**
    * Check if two values are equal
+   * Override in subclasses for custom equality checks
    * @param {*} val1 - First value
    * @param {*} val2 - Second value
-   * @returns {boolean} True if values are equal
+   * @returns {boolean} True if equal
    */
   equals(val1, val2) {
-    return val1 === val2;
+    if (typeof val1 !== typeof val2) return false;
+    
+    // For primitive types
+    if (typeof val1 !== 'object' || val1 === null) {
+      return val1 === val2;
+    }
+    
+    // For arrays
+    if (Array.isArray(val1) && Array.isArray(val2)) {
+      if (val1.length !== val2.length) return false;
+      for (let i = 0; i < val1.length; i++) {
+        if (!this.equals(val1[i], val2[i])) return false;
+      }
+      return true;
+    }
+    
+    // For objects (default implementation)
+    return JSON.stringify(val1) === JSON.stringify(val2);
+  }
+  
+  /**
+   * Run the data flow analysis on the SSA graph
+   * @param {object} graph - The SSA graph
+   * @returns {object} Analysis results
+   */
+  analyze(graph) {
+    if (!graph || !graph.nodes || !graph.edges) {
+      return { results: new Map(), iterations: 0, converged: false };
+    }
+    
+    // Initialize result values for all nodes
+    const results = new Map();
+    for (const [nodeId, node] of graph.nodes) {
+      results.set(nodeId, this.defaultValue());
+    }
+    
+    // Set initial value for entry/exit node based on direction
+    const startNodes = this.direction === DataFlowDirection.FORWARD ? 
+      graph.getEntryNodes() : 
+      graph.getExitNodes();
+    
+    for (const startNode of startNodes) {
+      if (startNode && graph.nodes.has(startNode)) {
+        results.set(startNode, this.initialValue(graph.nodes.get(startNode)));
+      }
+    }
+    
+    // Setup worklist
+    let worklist = Array.from(graph.nodes.keys());
+    let iterations = 0;
+    let changed = true;
+    
+    // Continue until no changes or max iterations
+    while (changed && iterations < this.maxIterations) {
+      iterations++;
+      changed = false;
+      
+      // Sort worklist based on direction (ensures proper traversal order)
+      if (this.direction === DataFlowDirection.FORWARD) {
+        // For forward analysis, process in topological order
+        worklist = graph.getTopologicalOrder();
+      } else {
+        // For backward analysis, process in reverse topological order
+        worklist = graph.getTopologicalOrder().reverse();
+      }
+      
+      for (const nodeId of worklist) {
+        const node = graph.nodes.get(nodeId);
+        if (!node) continue;
+        
+        // Get input value based on predecessors/successors
+        let inValue;
+        
+        if (this.direction === DataFlowDirection.FORWARD) {
+          // Forward analysis: use values from predecessors
+          const predecessors = graph.getPredecessors(nodeId);
+          if (predecessors.length === 0) {
+            // Entry node
+            inValue = results.get(nodeId);
+          } else {
+            // Join values from all predecessors
+            inValue = predecessors.reduce((acc, predId) => {
+              const predValue = results.get(predId) || this.defaultValue();
+              return acc === undefined ? predValue : this.join(acc, predValue);
+            }, undefined);
+          }
+        } else {
+          // Backward analysis: use values from successors
+          const successors = graph.getSuccessors(nodeId);
+          if (successors.length === 0) {
+            // Exit node
+            inValue = results.get(nodeId);
+          } else {
+            // Join values from all successors
+            inValue = successors.reduce((acc, succId) => {
+              const succValue = results.get(succId) || this.defaultValue();
+              return acc === undefined ? succValue : this.join(acc, succValue);
+            }, undefined);
+          }
+        }
+        
+        // Apply transfer function
+        const oldValue = results.get(nodeId);
+        const newValue = this.transferFunction(node, inValue, graph);
+        
+        // Check if value changed
+        if (!this.equals(oldValue, newValue)) {
+          results.set(nodeId, newValue);
+          changed = true;
+        }
+      }
+      
+      if (this.debug) {
+        console.log(`Iteration ${iterations}, changed: ${changed}`);
+      }
+    }
+    
+    return {
+      results,
+      iterations,
+      converged: iterations < this.maxIterations
+    };
   }
 }
 
@@ -267,5 +240,3 @@ export function analyzeDataFlow(ssaProgram, analysis) {
     graph
   };
 }
-
-export { DataFlowAnalysis };

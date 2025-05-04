@@ -234,62 +234,67 @@ export function propagateConstants(ssaProgram) {
     return ssaProgram; // Return unmodified program if invalid
   }
   
+  // Create a deep clone to avoid modifying the original
+  const optimizedProgram = JSON.parse(JSON.stringify(ssaProgram));
+  
   // Build SSA graph
-  const graph = buildSSAGraph(ssaProgram);
+  const graph = buildSSAGraph(optimizedProgram);
   
   // Run constant propagation analysis
   const analysis = new ConstantPropagationAnalysis();
   const { results } = analysis.analyze(graph);
   
+  // Track if any optimizations were applied
+  let optimizationsApplied = false;
+  
   // Apply the results to create an optimized program
-  const optimizedProgram = {
-    ...ssaProgram,
-    blocks: ssaProgram.blocks.map(block => {
-      if (!block) return block;
+  for (let i = 0; i < optimizedProgram.blocks.length; i++) {
+    const block = optimizedProgram.blocks[i];
+    if (!block) continue;
+    
+    const blockConstants = results.get(block.label) || new Map();
+    
+    // Replace variable uses with constants
+    for (let j = 0; j < block.instructions.length; j++) {
+      const instr = block.instructions[j];
+      if (!instr) continue;
       
-      const blockConstants = results.get(block.label) || new Map();
-      
-      // Replace variable uses with constants
-      const optimizedBlock = {
-        ...block,
-        instructions: block.instructions.map(instr => {
-          if (!instr) return instr;
-          
-          if (instr.type === 'Assignment') {
-            const optimizedValue = replaceConstants(instr.value, blockConstants);
-            
-            // If the optimized value is a constant, mark the optimization
-            if (optimizedValue !== instr.value) {
-              return {
-                ...instr,
-                value: optimizedValue,
-                optimized: true,
-                originalValue: instr.value
-              };
-            }
-            
-            return instr;
-          }
-          
-          return instr;
-        })
-      };
-      
-      // Optimize terminators
-      if (block.terminator && block.terminator.condition) {
-        const optimizedCondition = replaceConstants(block.terminator.condition, blockConstants);
+      if (instr.type === 'Assignment') {
+        const optimizedValue = replaceConstants(instr.value, blockConstants);
         
-        // If the condition is now a constant, we can simplify the branch
+        // If the optimized value is different from the original, mark the optimization
+        if (JSON.stringify(optimizedValue) !== JSON.stringify(instr.value)) {
+          block.instructions[j] = {
+            ...instr,
+            value: optimizedValue,
+            optimized: true,
+            originalValue: JSON.parse(JSON.stringify(instr.value))
+          };
+          optimizationsApplied = true;
+        }
+      }
+    }
+    
+    // Optimize terminators
+    if (block.terminator && block.terminator.condition) {
+      const optimizedCondition = replaceConstants(block.terminator.condition, blockConstants);
+      
+      // If the condition is now a constant, we can simplify the branch
+      const conditionChanged = JSON.stringify(optimizedCondition) !== JSON.stringify(block.terminator.condition);
+      
+      if (conditionChanged) {
+        const originalCondition = JSON.parse(JSON.stringify(block.terminator.condition));
+        
         if (optimizedCondition.type === 'BooleanLiteral' || 
             optimizedCondition.type === 'IntegerLiteral') {
           
           const isTrue = optimizedCondition.value !== 0 && optimizedCondition.value !== false;
           
-          optimizedBlock.terminator = {
+          block.terminator = {
             ...block.terminator,
             condition: optimizedCondition,
             optimized: true,
-            originalCondition: block.terminator.condition,
+            originalCondition: originalCondition,
             
             // For branch terminator, convert to jump if possible
             ...(block.terminator.type === 'Branch' ? {
@@ -297,18 +302,23 @@ export function propagateConstants(ssaProgram) {
               target: isTrue ? block.terminator.thenTarget : block.terminator.elseTarget
             } : {})
           };
-        } else if (optimizedCondition !== block.terminator.condition) {
-          optimizedBlock.terminator = {
+        } else {
+          block.terminator = {
             ...block.terminator,
             condition: optimizedCondition,
             optimized: true,
-            originalCondition: block.terminator.condition
+            originalCondition: originalCondition
           };
         }
+        optimizationsApplied = true;
       }
-      
-      return optimizedBlock;
-    })
+    }
+  }
+  
+  // Add metadata to indicate if optimizations were applied
+  optimizedProgram.metadata = {
+    ...optimizedProgram.metadata,
+    constantPropagationApplied: optimizationsApplied
   };
   
   return optimizedProgram;
