@@ -18,7 +18,7 @@ export const DataFlowDirection = {
 export const JoinOperation = {
   UNION: 'union',
   INTERSECTION: 'intersection',
-  CUSTOM: 'custom'
+  PRODUCT: 'product'
 };
 
 /**
@@ -239,4 +239,277 @@ export function analyzeDataFlow(ssaProgram, analysis) {
     results,
     graph
   };
+}
+
+/**
+ * Live Variables Analysis for dead code elimination
+ */
+export class LiveVariableAnalysis extends DataFlowAnalysis {
+  constructor() {
+    // Live variable analysis is a backward dataflow analysis
+    super(DataFlowDirection.BACKWARD, JoinOperation.UNION);
+  }
+  
+  /**
+   * Initial value is an empty set (no variables live)
+   */
+  initialValue() {
+    return new Set();
+  }
+  
+  /**
+   * Default value is an empty set
+   */
+  defaultValue() {
+    return new Set();
+  }
+  
+  /**
+   * Union of two sets (join operation)
+   */
+  join(set1, set2) {
+    const result = new Set(set1);
+    for (const item of set2) {
+      result.add(item);
+    }
+    return result;
+  }
+  
+  /**
+   * Transfer function: compute live variables before a block
+   * based on variables used in the block and live after the block
+   */
+  transferFunction(node, outSet, graph) {
+    // Start with the output set (variables live at exit)
+    const result = new Set(outSet);
+    
+    // Process instructions in reverse order
+    const instructions = [...node.instructions].reverse();
+    
+    // Process block terminator if present
+    if (node.blockId && graph.nodes.has(node.blockId)) {
+      const originalNode = graph.nodes.get(node.blockId);
+      if (originalNode && originalNode.terminator) {
+        // Add variables used in the terminator condition
+        if (originalNode.terminator.condition) {
+          const usedVars = this.getUsedVariables(originalNode.terminator.condition);
+          for (const v of usedVars) {
+            result.add(v);
+          }
+        }
+      }
+    }
+    
+    // Process instructions
+    for (const instr of instructions) {
+      if (!instr) continue;
+      
+      if (instr.type === 'Assignment') {
+        // Remove the target (it's defined here)
+        result.delete(instr.target);
+        
+        // Add variables used in the value
+        const usedVars = this.getUsedVariables(instr.value);
+        for (const v of usedVars) {
+          result.add(v);
+        }
+      } else if (instr.type === 'Assert') {
+        // Add variables used in the assertion
+        const usedVars = this.getUsedVariables(instr.condition);
+        for (const v of usedVars) {
+          result.add(v);
+        }
+      }
+    }
+    
+    // Process phi functions
+    const phiFunctions = node.phiFunctions || [];
+    for (const phi of phiFunctions) {
+      if (!phi) continue;
+      
+      // Remove the target (it's defined here)
+      result.delete(phi.target);
+      
+      // Add all source variables as they're used
+      for (const source of phi.sources) {
+        result.add(source);
+      }
+    }
+    
+    return result;
+  }
+  
+  /**
+   * Extract variables used in an expression
+   * @param {object} expr - Expression to analyze
+   * @returns {Set<string>} Set of variable names
+   */
+  getUsedVariables(expr) {
+    const variables = new Set();
+    
+    if (!expr) return variables;
+    
+    const visitNode = (node) => {
+      if (!node || typeof node !== 'object') return;
+      
+      // Check node type
+      if (node.type === 'Variable') {
+        variables.add(node.name);
+        return;
+      }
+      
+      // Recursively visit child nodes
+      for (const key in node) {
+        if (node[key] && typeof node[key] === 'object') {
+          visitNode(node[key]);
+        }
+      }
+    };
+    
+    visitNode(expr);
+    return variables;
+  }
+  
+  /**
+   * Compare two sets for equality
+   */
+  equals(set1, set2) {
+    if (set1.size !== set2.size) return false;
+    for (const item of set1) {
+      if (!set2.has(item)) return false;
+    }
+    return true;
+  }
+}
+
+/**
+ * Available Expressions Analysis for common subexpression elimination
+ */
+export class AvailableExpressionsAnalysis extends DataFlowAnalysis {
+  constructor() {
+    // Available expressions analysis is a forward dataflow analysis
+    super(DataFlowDirection.FORWARD, JoinOperation.INTERSECTION);
+  }
+  
+  /**
+   * Initial value is an empty map
+   */
+  initialValue() {
+    return new Map();
+  }
+  
+  /**
+   * Default value is an empty map
+   */
+  defaultValue() {
+    return new Map();
+  }
+  
+  /**
+   * Intersection of two maps (join operation)
+   */
+  join(map1, map2) {
+    const result = new Map();
+    
+    // Add elements that are in both maps
+    for (const [key, value] of map1) {
+      if (map2.has(key)) {
+        result.set(key, value);
+      }
+    }
+    
+    return result;
+  }
+  
+  /**
+   * Transfer function: compute available expressions after a block
+   * based on expressions killed and generated in the block
+   */
+  transferFunction(node, inMap, graph) {
+    // Start with the input map (expressions available at entry)
+    const result = new Map(inMap);
+    
+    // Process instructions
+    for (const instr of node.instructions) {
+      if (!instr) continue;
+      
+      if (instr.type === 'Assignment') {
+        // Kill expressions that use the assigned variable
+        const target = instr.target;
+        if (target) {
+          // Remove expressions that use this variable
+          for (const [key, expr] of result) {
+            if (this.expressionUsesVariable(expr, target)) {
+              result.delete(key);
+            }
+          }
+        }
+        
+        // Generate new expressions
+        if (instr.value && instr.value.type === 'BinaryExpression') {
+          const exprKey = this.expressionToKey(instr.value);
+          if (exprKey) {
+            result.set(exprKey, {
+              expr: instr.value,
+              var: instr.target
+            });
+          }
+        }
+      }
+    }
+    
+    return result;
+  }
+  
+  /**
+   * Check if an expression uses a specific variable
+   * @param {object} expr - The expression object
+   * @param {string} variable - Variable name
+   * @returns {boolean} True if the expression uses the variable
+   */
+  expressionUsesVariable(exprInfo, variable) {
+    if (!exprInfo || !exprInfo.expr) return false;
+    
+    const expr = exprInfo.expr;
+    
+    // Check if left or right side uses the variable
+    if (expr.left && expr.left.type === 'Variable' && expr.left.name === variable) {
+      return true;
+    }
+    
+    if (expr.right && expr.right.type === 'Variable' && expr.right.name === variable) {
+      return true;
+    }
+    
+    return false;
+  }
+  
+  /**
+   * Convert an expression to a unique string key
+   * @param {object} expr - The expression to convert
+   * @returns {string} A unique key for the expression
+   */
+  expressionToKey(expr) {
+    if (!expr || expr.type !== 'BinaryExpression') return null;
+    
+    // For simplicity, use a string representation
+    // In a production system, we'd use a more sophisticated approach
+    return `${JSON.stringify(expr.left)}-${expr.operator}-${JSON.stringify(expr.right)}`;
+  }
+  
+  /**
+   * Compare two maps for equality
+   */
+  equals(map1, map2) {
+    if (map1.size !== map2.size) return false;
+    
+    for (const [key, value] of map1) {
+      if (!map2.has(key)) return false;
+      
+      // For simplicity, just compare keys
+      // In a production system, we'd also compare values
+    }
+    
+    return true;
+  }
 }

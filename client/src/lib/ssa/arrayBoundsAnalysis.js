@@ -92,6 +92,17 @@ export function analyzeArrayBounds(ssaProgram, options = {}) {
 }
 
 /**
+ * Handles array bounds checking during SSA transformation
+ * This is a wrapper for the analyzeArrayBounds function
+ * @param {Object} ssaProgram - The SSA program to analyze
+ * @param {Object} options - Analysis options
+ * @returns {Object} The SSA program with bounds checks inserted
+ */
+export function handleArrayBounds(ssaProgram, options = {}) {
+  return analyzeArrayBounds(ssaProgram, options);
+}
+
+/**
  * Collect information about arrays declared in the program
  * @param {Object} program - The SSA program
  * @returns {Map} Map of array names to their information

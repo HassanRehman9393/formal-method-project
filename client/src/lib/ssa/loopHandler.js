@@ -637,3 +637,14 @@ function findIncrementInBody(body, varName) {
   
   return null;
 }
+
+/**
+ * Transform loops in an AST to prepare for SSA conversion
+ * This is an alias for unrollLoops to match imports in ssaTransformer.js
+ * @param {object} ast - The AST to transform
+ * @param {number} unrollDepth - Maximum unroll depth for loops
+ * @returns {object} Transformed AST with unrolled loops
+ */
+export function transformLoops(ast, unrollDepth = 3) {
+  return unrollLoops(ast, { unrollDepth });
+}

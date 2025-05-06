@@ -191,3 +191,51 @@ export function validateSSAProgram(ssaProgram) {
     issues
   };
 }
+
+/**
+ * Handle edge cases in SSA transformation
+ * This is a wrapper function to process edge cases in an SSA program
+ * @param {Object} ssaProgram - The SSA program to process
+ * @param {Object} options - Edge case handling options
+ * @returns {Object} The processed SSA program
+ */
+export function handleEdgeCases(ssaProgram, options = {}) {
+  const config = createEdgeCaseConfig(options);
+  
+  try {
+    let processedSSA = ssaProgram;
+    
+    // Add array bounds analysis
+    if (config.analyzeArrayBounds) {
+      processedSSA = analyzeArrayBounds(processedSSA, {
+        insertRuntimeChecks: config.insertRuntimeChecks,
+        generateAssertions: config.generateAssertions
+      });
+    }
+    
+    // Process complex assertions
+    if (config.processComplexAssertions) {
+      processedSSA = processComplexAssertions(processedSSA);
+    }
+    
+    // Validate the results if requested
+    if (config.validateResults) {
+      const validationResult = validateSSAProgram(processedSSA);
+      
+      if (!validationResult.valid && config.treatWarningsAsErrors) {
+        throw new Error(`Invalid SSA program: ${validationResult.issues[0]?.message}`);
+      }
+      
+      // Add validation results to metadata
+      processedSSA.metadata = {
+        ...processedSSA.metadata,
+        validation: validationResult
+      };
+    }
+    
+    return processedSSA;
+  } catch (error) {
+    console.error('Error handling edge cases:', error);
+    return ssaProgram; // Return original if error occurs
+  }
+}

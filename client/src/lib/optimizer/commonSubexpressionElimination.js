@@ -1,8 +1,11 @@
 /**
  * Common Subexpression Elimination Optimization
  * 
- * Eliminates redundant computations
+ * Identifies and eliminates redundant computations in an SSA program
  */
+
+import { buildSSAGraph } from './ssaGraph.js';
+import { AvailableExpressionsAnalysis } from './dataFlowAnalysis.js';
 
 /**
  * Create a hash for an expression
@@ -37,124 +40,107 @@ function hashExpression(expr) {
 }
 
 /**
+ * Convert an expression to a unique key for comparison
+ * @param {object} expr - Expression to convert
+ * @returns {string|null} Unique key or null if not supported
+ */
+function expressionToKey(expr) {
+  if (!expr) return null;
+  
+  // Only handle certain expression types
+  if (expr.type === 'BinaryExpression') {
+    // Create a deterministic key for binary expressions
+    return `${JSON.stringify(expr.left)}-${expr.operator}-${JSON.stringify(expr.right)}`;
+  }
+  
+  // Could extend to handle other expression types here
+  
+  return null;
+}
+
+/**
  * Eliminate common subexpressions from an SSA program
  * @param {object} ssaProgram - The SSA program to optimize
  * @returns {object} Optimized SSA program
  */
 export function eliminateCommonSubexpressions(ssaProgram) {
-  if (!ssaProgram || !ssaProgram.blocks || !Array.isArray(ssaProgram.blocks)) {
-    console.warn('CSE: Invalid SSA program provided');
-    return createDefaultSSA();
+  if (!ssaProgram || !ssaProgram.blocks) {
+    return ssaProgram; // Return unmodified program if invalid
   }
   
-  try {
-    // Create a deep clone to avoid modifying the original
-    const optimizedProgram = JSON.parse(JSON.stringify(ssaProgram));
+  // Create a deep clone to avoid modifying the original
+  const optimizedProgram = JSON.parse(JSON.stringify(ssaProgram));
+  
+  // Build SSA graph
+  const graph = buildSSAGraph(optimizedProgram);
+  
+  // Run available expressions analysis
+  const analysis = new AvailableExpressionsAnalysis();
+  const { results } = analysis.analyze(graph);
+  
+  // Track if any optimizations were applied
+  let optimizationsApplied = false;
+  let expressionsEliminated = 0;
+  
+  // Apply the results to create an optimized program
+  for (let i = 0; i < optimizedProgram.blocks.length; i++) {
+    const block = optimizedProgram.blocks[i];
+    if (!block) continue;
     
-    // Track if any optimizations were applied
-    let optimizationsApplied = false;
-    let expressionsEliminated = 0;
+    const availableExpr = results.get(block.label) || new Map();
     
-    // Apply CSE block by block
-    for (let blockIndex = 0; blockIndex < optimizedProgram.blocks.length; blockIndex++) {
-      const block = optimizedProgram.blocks[blockIndex];
-      if (!block || !block.instructions) continue;
+    // Map expressions to variables that hold them
+    const exprToVar = new Map();
+    
+    // Process instructions to eliminate common subexpressions
+    for (let j = 0; j < block.instructions.length; j++) {
+      const instr = block.instructions[j];
+      if (!instr) continue;
       
-      const availableExpressions = new Map();
-      let blockModified = false;
-      
-      // First pass: record all expressions
-      for (let i = 0; i < block.instructions.length; i++) {
-        const instr = block.instructions[i];
-        if (!instr || instr.type !== 'Assignment') continue;
+      if (instr.type === 'Assignment') {
+        // Skip assignments to array elements for now
+        if (instr.target.includes('[')) continue;
         
-        // Skip simple assignments and literals
-        if (!instr.value || 
-            instr.value.type === 'Variable' || 
-            instr.value.type === 'IntegerLiteral' || 
-            instr.value.type === 'BooleanLiteral') {
-          continue;
-        }
+        // Generate a key for the expression
+        const exprKey = expressionToKey(instr.value);
         
-        // Hash the expression
-        const hash = hashExpression(instr.value);
-        
-        // Add to available expressions
-        availableExpressions.set(hash, {
-          target: instr.target,
-          value: instr.value,
-          index: i
-        });
-      }
-      
-      // Second pass: replace common subexpressions
-      for (let i = 0; i < block.instructions.length; i++) {
-        const instr = block.instructions[i];
-        if (!instr || instr.type !== 'Assignment') continue;
-        
-        // Skip simple assignments and literals
-        if (!instr.value || 
-            instr.value.type === 'Variable' || 
-            instr.value.type === 'IntegerLiteral' || 
-            instr.value.type === 'BooleanLiteral') {
-          continue;
-        }
-        
-        // Hash the expression
-        const hash = hashExpression(instr.value);
-        
-        // Get the first occurrence of this expression
-        const firstOccurrence = availableExpressions.get(hash);
-        
-        // Replace with variable if this is a later occurrence
-        if (firstOccurrence && firstOccurrence.index < i && firstOccurrence.target !== instr.target) {
-          // Store the original expression for visualization
-          const originalValue = JSON.parse(JSON.stringify(instr.value));
+        // If this expression is already computed, reuse its result
+        if (exprKey && exprToVar.has(exprKey)) {
+          const existingVar = exprToVar.get(exprKey);
           
-          // Replace with a reference to the variable
-          block.instructions[i] = {
-            type: 'Assignment',
-            target: instr.target,
-            value: {
-              type: 'Variable',
-              name: firstOccurrence.target
+          block.instructions[j] = {
+            ...instr,
+            originalValue: JSON.parse(JSON.stringify(instr.value)),
+            value: { 
+              type: 'Identifier',
+              name: existingVar
             },
             optimized: true,
-            originalValue: originalValue,
-            optimizationType: 'commonSubexpressionElimination'
+            optimizationType: 'CommonSubexpressionElimination'
           };
           
-          blockModified = true;
+          optimizationsApplied = true;
           expressionsEliminated++;
+        } else if (exprKey) {
+          // Register this computation for future reuse
+          exprToVar.set(exprKey, instr.target);
         }
       }
-      
-      if (blockModified) {
-        optimizationsApplied = true;
-        block.optimized = true;
-        block.metadata = {
-          ...block.metadata,
-          commonSubexpressionElimination: {
-            applied: true,
-            expressionsEliminated: expressionsEliminated
-          }
-        };
-      }
     }
-    
-    // Add metadata to indicate if optimizations were applied
-    optimizedProgram.metadata = {
-      ...optimizedProgram.metadata,
-      commonSubexpressionEliminationApplied: optimizationsApplied,
-      expressionsEliminated
-    };
-    
-    return optimizedProgram;
-  } catch (error) {
-    console.error('CSE: Error during optimization', error);
-    return ssaProgram;
   }
+  
+  // Add metadata to indicate if optimizations were applied
+  optimizedProgram.metadata = {
+    ...optimizedProgram.metadata,
+    commonSubexpressionEliminationApplied: optimizationsApplied,
+    expressionsEliminated
+  };
+  
+  return optimizedProgram;
 }
+
+// Export alias for compatibility with imported name
+export const commonSubexpressionElimination = eliminateCommonSubexpressions;
 
 /**
  * Create a default SSA program structure with CSE opportunities
@@ -249,3 +235,5 @@ function createDefaultSSA() {
     }
   };
 }
+
+

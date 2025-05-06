@@ -11,10 +11,10 @@
 
 // Program is the starting rule
 Program
-  = leading:OptWhitespace stmts:StatementList trailing:OptWhitespace {
+  = leading:OptWhitespace body:StatementList trailing:OptWhitespace {
       return {
         type: "Program",
-        statements: stmts,
+        body: body,
         location: location()
       };
     }
@@ -45,17 +45,9 @@ SimpleAssignment
   = target:Identifier OptWhitespace ":=" OptWhitespace value:Expression OptWhitespace ";" {
       return {
         type: "AssignmentStatement",
-        target: target,
-        value: value,
-        location: location()
-      };
-    }
-  / target:Identifier OptWhitespace ":=" OptWhitespace value:AssignmentStatement {
-      // Handle chained assignments: x := y := z := 10;
-      return {
-        type: "AssignmentStatement",
-        target: target,
-        value: value.value, // Get the final value from the right chain
+        left: target,
+        operator: ':=',
+        right: value,
         location: location()
       };
     }
@@ -65,8 +57,9 @@ ArrayAssignment
   = target:ArrayAccess OptWhitespace ":=" OptWhitespace value:Expression OptWhitespace ";" {
       return {
         type: "AssignmentStatement",
-        target: target,
-        value: value,
+        left: target,
+        operator: ':=',
+        right: value,
         location: location()
       };
     }
@@ -76,9 +69,9 @@ IfStatement
   = "if" OptWhitespace "(" OptWhitespace condition:Expression OptWhitespace ")" OptWhitespace thenBranch:Statement elsePart:ElsePart? {
       return {
         type: "IfStatement",
-        condition: condition,
-        thenBranch: thenBranch,
-        elseBranch: elsePart,
+        test: condition,
+        consequent: thenBranch,
+        alternate: elsePart,
         location: location()
       };
     }
@@ -93,7 +86,7 @@ WhileStatement
   = "while" OptWhitespace "(" OptWhitespace condition:Expression OptWhitespace ")" OptWhitespace body:Statement {
       return {
         type: "WhileStatement",
-        condition: condition,
+        test: condition,
         body: body,
         location: location()
       };
@@ -109,7 +102,7 @@ ForStatement
       return {
         type: "ForStatement",
         init: init,
-        condition: condition,
+        test: condition,
         update: update,
         body: body,
         location: location()
@@ -120,8 +113,9 @@ ForInit
   = target:AssignmentTarget OptWhitespace ":=" OptWhitespace value:Expression {
       return {
         type: "AssignmentStatement",
-        target: target,
-        value: value,
+        left: target,
+        operator: ':=',
+        right: value,
         location: location()
       };
     }
@@ -130,8 +124,9 @@ ForUpdate
   = target:AssignmentTarget OptWhitespace ":=" OptWhitespace value:Expression {
       return {
         type: "AssignmentStatement",
-        target: target,
-        value: value,
+        left: target,
+        operator: ':=',
+        right: value,
         location: location()
       };
     }
@@ -141,7 +136,7 @@ AssertStatement
   = "assert" OptWhitespace "(" OptWhitespace condition:Expression OptWhitespace ")" OptWhitespace ";" {
       return {
         type: "AssertStatement",
-        condition: condition,
+        test: condition,
         location: location()
       };
     }
@@ -151,7 +146,7 @@ PostConditionStatement
   = "postcondition" OptWhitespace "(" OptWhitespace condition:Expression OptWhitespace ")" OptWhitespace ";" {
       return {
         type: "PostConditionStatement",
-        condition: condition,
+        test: condition,
         location: location()
       };
     }
@@ -161,7 +156,7 @@ BlockStatement
   = "{" OptWhitespace stmts:StatementList OptWhitespace "}" {
       return {
         type: "BlockStatement",
-        statements: stmts,
+        body: stmts,
         location: location()
       };
     }
@@ -180,104 +175,148 @@ AssignmentTarget
   = Identifier
   / ArrayAccess
 
-// Array access: arr[expr] or matrix[i][j]
+// Array access: arr[expr] (now with better support for nested array access)
 ArrayAccess
-  = base:NestedArrayAccess {
-      return base;
-    }
-
-// Support for nested array access like matrix[i][j]
-NestedArrayAccess
   = array:Identifier indices:(
-      "[" OptWhitespace index:Expression OptWhitespace "]" {
+      OptWhitespace "[" OptWhitespace index:Expression OptWhitespace "]" {
         return index;
       }
     )+ {
-      // Handle nested array access by chaining them
-      return indices.reduce((acc, index) => ({
-        type: "ArrayAccess",
-        array: acc,
-        index: index,
-        location: location()
-      }), array);
+      // Build the array access tree from left to right
+      let result = array;
+      for (let i = 0; i < indices.length; i++) {
+        result = {
+          type: "ArrayAccess",
+          array: result,
+          index: indices[i],
+          location: location()
+        };
+      }
+      return result;
     }
 
-// Expression hierarchy - follows order of operations
+// Expression grammar with operator precedence
 Expression
   = LogicalOrExpression
 
 LogicalOrExpression
-  = head:LogicalAndExpression tail:(OptWhitespace "||" OptWhitespace LogicalAndExpression)* {
-      return tail.reduce((left, [, op, , right]) => ({
+  = head:LogicalAndExpression
+    tail:(
+      OptWhitespace "||" OptWhitespace operand:LogicalAndExpression {
+        return { operator: "||", operand: operand };
+      }
+    )* {
+      return tail.reduce((left, { operator, operand }) => ({
         type: "BinaryExpression",
-        operator: op,
+        operator: operator,
         left: left,
-        right: right,
+        right: operand,
         location: location()
       }), head);
     }
 
 LogicalAndExpression
-  = head:EqualityExpression tail:(OptWhitespace "&&" OptWhitespace EqualityExpression)* {
-      return tail.reduce((left, [, op, , right]) => ({
+  = head:EqualityExpression
+    tail:(
+      OptWhitespace "&&" OptWhitespace operand:EqualityExpression {
+        return { operator: "&&", operand: operand };
+      }
+    )* {
+      return tail.reduce((left, { operator, operand }) => ({
         type: "BinaryExpression",
-        operator: op,
+        operator: operator,
         left: left,
-        right: right,
+        right: operand,
         location: location()
       }), head);
     }
 
 EqualityExpression
-  = head:RelationalExpression tail:(OptWhitespace ("==" / "!=") OptWhitespace RelationalExpression)* {
-      return tail.reduce((left, [, op, , right]) => ({
+  = head:RelationalExpression
+    tail:(
+      OptWhitespace op:("==" / "!=") OptWhitespace operand:RelationalExpression {
+        return { operator: op, operand: operand };
+      }
+    )* {
+      return tail.reduce((left, { operator, operand }) => ({
         type: "BinaryExpression",
-        operator: op,
+        operator: operator,
         left: left,
-        right: right,
+        right: operand,
         location: location()
       }), head);
     }
 
 RelationalExpression
-  = head:AdditiveExpression tail:(OptWhitespace ("<=" / ">=" / "<" / ">") OptWhitespace AdditiveExpression)* {
-      return tail.reduce((left, [, op, , right]) => ({
+  = head:AdditiveExpression
+    tail:(
+      OptWhitespace op:("<=" / ">=" / "<" / ">") OptWhitespace operand:AdditiveExpression {
+        return { operator: op, operand: operand };
+      }
+    )* {
+      return tail.reduce((left, { operator, operand }) => ({
         type: "BinaryExpression",
-        operator: op,
+        operator: operator,
         left: left,
-        right: right,
+        right: operand,
         location: location()
       }), head);
     }
 
 AdditiveExpression
-  = head:MultiplicativeExpression tail:(OptWhitespace ("+" / "-") OptWhitespace MultiplicativeExpression)* {
-      return tail.reduce((left, [, op, , right]) => ({
+  = head:MultiplicativeExpression
+    tail:(
+      OptWhitespace op:("+" / "-") OptWhitespace operand:MultiplicativeExpression {
+        return { operator: op, operand: operand };
+      }
+    )* {
+      return tail.reduce((left, { operator, operand }) => ({
         type: "BinaryExpression",
-        operator: op,
+        operator: operator,
         left: left,
-        right: right,
+        right: operand,
         location: location()
       }), head);
     }
 
 MultiplicativeExpression
-  = head:UnaryExpression tail:(OptWhitespace ("*" / "/" / "%") OptWhitespace UnaryExpression)* {
-      return tail.reduce((left, [, op, , right]) => ({
+  = head:UnaryExpression
+    tail:(
+      OptWhitespace op:("*" / "/" / "%") OptWhitespace operand:UnaryExpression {
+        return { operator: op, operand: operand };
+      }
+    )* {
+      return tail.reduce((left, { operator, operand }) => ({
         type: "BinaryExpression",
-        operator: op,
+        operator: operator,
         left: left,
-        right: right,
+        right: operand,
         location: location()
       }), head);
     }
 
 UnaryExpression
-  = op:("!" / "-") OptWhitespace expr:UnaryExpression {
+  = op:("!" / "-") OptWhitespace operand:UnaryExpression {
       return {
         type: "UnaryExpression",
         operator: op,
-        expression: expr,
+        argument: operand,
+        prefix: true,
+        location: location()
+      };
+    }
+  / ConditionalExpression
+
+// Add support for ternary conditional expressions: condition ? thenExpr : elseExpr
+ConditionalExpression
+  = condition:PrimaryExpression OptWhitespace 
+    "?" OptWhitespace thenExpr:Expression OptWhitespace 
+    ":" OptWhitespace elseExpr:Expression {
+      return {
+        type: "ConditionalExpression",
+        test: condition,
+        consequent: thenExpr,
+        alternate: elseExpr,
         location: location()
       };
     }
@@ -287,11 +326,21 @@ PrimaryExpression
   = Literal
   / ArrayAccess
   / Identifier
-  / "(" OptWhitespace expr:Expression OptWhitespace ")" { return expr; }
+  / ParenthesizedExpression
 
-// Identifier
+// Support for parenthesized expressions
+ParenthesizedExpression
+  = "(" OptWhitespace expr:Expression OptWhitespace ")" {
+      // Preserve the expression type but mark that it was parenthesized
+      return {
+        ...expr,
+        parenthesized: true
+      };
+    }
+
+// Identifier: variable name
 Identifier
-  = name:$([a-zA-Z_][a-zA-Z0-9_]*) {
+  = name:IdentifierName {
       return {
         type: "Identifier",
         name: name,
@@ -299,43 +348,65 @@ Identifier
       };
     }
 
-// Literals (integers and booleans)
+IdentifierName
+  = first:[a-zA-Z_] rest:[a-zA-Z0-9_]* {
+      return first + rest.join("");
+    }
+
+// Literals: values
 Literal
-  = IntegerLiteral
-  / BooleanLiteral
+  = IntLiteral
+  / BoolLiteral
 
-IntegerLiteral
-  = value:$([0-9]+) {
+// Integer literal
+IntLiteral
+  = digits:[0-9]+ {
       return {
-        type: "IntegerLiteral",
-        value: parseInt(value, 10),
+        type: "IntLiteral",
+        value: parseInt(digits.join(""), 10),
+        raw: digits.join(""),
         location: location()
       };
     }
 
-BooleanLiteral
-  = value:"true" {
+// Boolean literal
+BoolLiteral
+  = value:("true" / "false") {
       return {
-        type: "BooleanLiteral",
-        value: true,
-        location: location()
-      };
-    }
-  / value:"false" {
-      return {
-        type: "BooleanLiteral",
-        value: false,
+        type: "BoolLiteral",
+        value: value === "true",
+        raw: value,
         location: location()
       };
     }
 
-// Mandatory whitespace (at least one space, tab, newline)
-Whitespace
-  = ([ \t\n\r]+ / Comment)
-
-// Optional whitespace (zero or more spaces, tabs, newlines)
+// Whitespace handling
 OptWhitespace
-  = ([ \t\n\r] / Comment)*
+  = Whitespace*
 
+Whitespace
+  = [ \t\n\r]
+  / Comment
+
+// Support for comments
 Comment
-  = "//" (![\n\r] .)* ([\n\r] / !.)
+  = SingleLineComment
+  / MultiLineComment
+
+SingleLineComment
+  = "//" (!LineTerminator .)* (LineTerminator / EOF)
+
+MultiLineComment
+  = "/*" (!"*/" .)* "*/"
+
+LineTerminator
+  = [\n\r\u2028\u2029]
+
+EOF
+  = !.
+
+// Helper rule for better error messages on missing semicolons
+MissingSemicolon
+  = !(";" / "}" / ")" / EOF) . {
+      error("Missing semicolon");
+    }

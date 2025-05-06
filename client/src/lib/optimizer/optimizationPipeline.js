@@ -111,17 +111,24 @@ export function optimizeSSA(ssaProgram, options = {}) {
       try {
         const afterConstProp = propagateConstants(currentProgram);
         
-        // Check if optimization was applied
-        const constPropChanged = afterConstProp && afterConstProp.metadata?.constantPropagationApplied === true;
+        // Check if optimization was applied - look at the metadata flag
+        const constPropChanged = afterConstProp && 
+            (afterConstProp.metadata?.constantPropagationApplied === true || 
+             afterConstProp.metadata?.constantsPropagated > 0);
         
         if (constPropChanged) {
           changed = true;
           currentProgram = afterConstProp;
-          metadata.passesApplied.push('constantPropagation');
+          
+          // Add to the passesApplied array if not already present
+          if (!metadata.passesApplied.includes('ConstantPropagation')) {
+            metadata.passesApplied.push('ConstantPropagation');
+          }
+          
           metadata.optimizationStats.constantPropagation++;
           
           iterationChanges.passes.push({
-            name: 'constantPropagation',
+            name: 'ConstantPropagation',
             changed: constPropChanged
           });
         }
@@ -135,17 +142,24 @@ export function optimizeSSA(ssaProgram, options = {}) {
       try {
         const afterDCE = eliminateDeadCode(currentProgram);
         
-        // Check if optimization was applied
-        const dceChanged = afterDCE && afterDCE.metadata?.deadCodeEliminationApplied === true;
+        // Check if optimization was applied - look at the metadata flag
+        const dceChanged = afterDCE && 
+            (afterDCE.metadata?.deadCodeEliminationApplied === true || 
+             afterDCE.metadata?.instructionsRemoved > 0);
         
         if (dceChanged) {
           changed = true;
           currentProgram = afterDCE;
-          metadata.passesApplied.push('deadCodeElimination');
+          
+          // Add to the passesApplied array if not already present
+          if (!metadata.passesApplied.includes('DeadCodeElimination')) {
+            metadata.passesApplied.push('DeadCodeElimination');
+          }
+          
           metadata.optimizationStats.deadCodeElimination++;
           
           iterationChanges.passes.push({
-            name: 'deadCodeElimination',
+            name: 'DeadCodeElimination',
             changed: dceChanged
           });
         }
@@ -159,17 +173,24 @@ export function optimizeSSA(ssaProgram, options = {}) {
       try {
         const afterCSE = eliminateCommonSubexpressions(currentProgram);
         
-        // Check if optimization was applied
-        const cseChanged = afterCSE && afterCSE.metadata?.commonSubexpressionEliminationApplied === true;
+        // Check if optimization was applied - look at the metadata flag
+        const cseChanged = afterCSE && 
+            (afterCSE.metadata?.commonSubexpressionEliminationApplied === true || 
+             afterCSE.metadata?.expressionsEliminated > 0);
         
         if (cseChanged) {
           changed = true;
           currentProgram = afterCSE;
-          metadata.passesApplied.push('commonSubexpressionElimination');
+          
+          // Add to the passesApplied array if not already present
+          if (!metadata.passesApplied.includes('CommonSubexpressionElimination')) {
+            metadata.passesApplied.push('CommonSubexpressionElimination');
+          }
+          
           metadata.optimizationStats.commonSubexpressionElimination++;
           
           iterationChanges.passes.push({
-            name: 'commonSubexpressionElimination',
+            name: 'CommonSubexpressionElimination',
             changed: cseChanged
           });
         }
@@ -218,6 +239,14 @@ export function optimizeSSA(ssaProgram, options = {}) {
         : 0
     };
   }
+  
+  // Add optimization metadata to the program
+  currentProgram.metadata = {
+    ...currentProgram.metadata,
+    optimizations: metadata.passesApplied,
+    optimizationStats: metadata.optimizationStats,
+    optimized: metadata.optimized
+  };
   
   return {
     program: currentProgram,

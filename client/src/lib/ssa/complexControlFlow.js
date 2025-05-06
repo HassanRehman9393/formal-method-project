@@ -31,6 +31,9 @@ export function preprocessComplexControlFlow(ast) {
   return processedAst;
 }
 
+// Export alias for backward compatibility
+export const processComplexControlFlow = preprocessComplexControlFlow;
+
 /**
  * Convert break/continue statements to explicit jumps
  * @param {Object} ast - The AST to process

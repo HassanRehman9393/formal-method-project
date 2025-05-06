@@ -1,75 +1,146 @@
 /**
- * Integration test for the parser and SSA transformation
+ * Integration tests for the complete pipeline:
+ * Parsing -> SSA Transformation -> Optimization
  */
 
-import { parseProgram } from '../parser/index.js';
-import { transformToSSA, formatSSA, extractCFG } from './index.js';
+import { parse } from '../parser/parser.js';
+import { transformToSSA } from './ssaTransformer.js';
+import { optimizeSSA } from '../optimizer/optimizationPipeline.js';
+
+// Track test results
+let passedTests = 0;
+let failedTests = 0;
 
 /**
- * Tests the end-to-end flow from parsing to SSA generation
+ * Run an integration test through the entire pipeline
+ * 
+ * @param {string} name - Test name
+ * @param {string} code - Program code
+ * @param {Object} options - Test options
+ * @param {Object} expectations - Expected test results
  */
-async function testParserToSSA() {
-  console.log('Running integration tests: Parser → SSA Transformation\n');
-  
-  // Sample complex program
-  const programCode = `
-    // Calculate factorial with an assertion
-    n := 5;
-    factorial := 1;
-    i := 1;
-    
-    while (i <= n) {
-      factorial := factorial * i;
-      i := i + 1;
-    }
-    
-    // Add an assertion to verify correctness
-    assert(factorial == 120);
-    
-    // Test if statement and further assignments
-    if (factorial > 100) {
-      result := "large";
-    } else {
-      result := "small";
-    }
-  `;
-  
+function runTest(name, code, options = {}, expectations = {}) {
+  console.log(`Running integration test: ${name}`);
   try {
-    console.log('Source code:');
-    console.log(programCode);
+    // Parse the program
+    const ast = parse(code);
+    if (!ast) {
+      throw new Error('Parser returned null or undefined');
+    }
     
-    console.log('\n1. Parsing code to AST...');
-    const ast = parseProgram(programCode);
-    console.log('✅ Parsing successful');
+    // Transform to SSA
+    const ssaResult = transformToSSA(ast, options);
+    if (!ssaResult || !ssaResult.ssaAST) {
+      throw new Error('SSA transformation returned invalid result');
+    }
     
-    console.log('\n2. Extracting control flow graph...');
-    const cfg = extractCFG(ast);
-    console.log('✅ CFG extraction successful');
-    console.log(`   Generated ${cfg.nodes.length} CFG nodes`);
+    // Optimize SSA
+    const optimizedResult = optimizeSSA(ssaResult);
+    if (!optimizedResult) {
+      throw new Error('SSA optimization returned invalid result');
+    }
     
-    console.log('\n3. Transforming to SSA...');
-    const ssaProgram = transformToSSA(ast);
-    console.log('✅ SSA transformation successful');
+    // Verify expectations if provided
+    if (expectations.optimizations && expectations.optimizations.length > 0) {
+      const optimizationsMade = optimizedResult.optimizationsMade || [];
+      for (const expected of expectations.optimizations) {
+        if (!optimizationsMade.some(opt => opt.type === expected)) {
+          console.error(`❌ Expected optimization "${expected}" was not applied`);
+          failedTests++;
+          return;
+        }
+      }
+    }
     
-    console.log('\n4. Formatting SSA code...');
-    const ssaCode = formatSSA(ssaProgram);
-    console.log('✅ Formatting successful');
-    
-    console.log('\nSSA Form:');
-    console.log(ssaCode);
-    
-    console.log('\n✅ All integration tests passed!');
-    return true;
+    console.log(`✓ Integration test "${name}" passed`);
+    passedTests++;
   } catch (error) {
-    console.error('\n❌ Integration test failed:');
-    console.error(error);
-    return false;
+    console.error(`❌ Integration test "${name}" failed with error: ${error.message}`);
+    failedTests++;
   }
 }
 
-// Run the integration test when this module is executed directly
-if (typeof require !== 'undefined' && require.main === module) {
-  testParserToSSA().catch(console.error);
-}
+// Run the tests
 
-export default testParserToSSA;
+console.log('\n=== Basic Integration Tests ===');
+
+// Test 1: Simple program with constant propagation
+runTest(
+  'Simple constant propagation',
+  `
+    x := 5;
+    y := 10;
+    z := x + y;
+    result := z * 2;
+  `,
+  { loopUnrollDepth: 3 },
+  { optimizations: ['ConstantPropagation'] }
+);
+
+// Test 2: Conditional with dead code elimination
+runTest(
+  'Conditional with dead code',
+  `
+    flag := true;
+    if (flag) {
+      x := 10;
+      result := x * 2;
+    } else {
+      // This branch should be eliminated
+      x := 20;
+      result := x * 3;
+    }
+    unused := 42; // This should be eliminated
+  `,
+  { loopUnrollDepth: 3 },
+  { optimizations: ['ConstantPropagation', 'DeadCodeElimination'] }
+);
+
+// Test 3: Loop unrolling and optimization
+runTest(
+  'Loop unrolling with optimization',
+  `
+    sum := 0;
+    for (i := 0; i < 3; i := i + 1) {
+      temp := i * 2;
+      sum := sum + temp;
+    }
+    result := sum;
+  `,
+  { loopUnrollDepth: 3 },
+  { optimizations: ['ConstantPropagation'] }
+);
+
+// Test 4: Array access
+runTest(
+  'Array access patterns',
+  `
+    arr[0] := 1;
+    arr[1] := 2;
+    arr[2] := 3;
+    sum := arr[0] + arr[1] + arr[2];
+    result := sum;
+  `,
+  { loopUnrollDepth: 3 },
+  { optimizations: ['ConstantPropagation'] }
+);
+
+// Test 5: Complex expressions
+runTest(
+  'Complex expressions',
+  `
+    a := 5;
+    b := 10;
+    c := 15;
+    
+    result := (a + b) * c / (a + b - 5);
+  `,
+  { loopUnrollDepth: 3 },
+  { optimizations: ['ConstantPropagation'] }
+);
+
+// Report summary
+console.log('\n=== Integration Test Summary ===');
+console.log(`Passed: ${passedTests}`);
+console.log(`Failed: ${failedTests}`);
+console.log('All integration tests completed.\n');

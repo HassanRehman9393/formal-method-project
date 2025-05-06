@@ -4,8 +4,20 @@
  */
 const z3Service = require('./z3Service');
 const smtGenerator = require('./smtGenerator');
+const constraintOptimizer = require('./constraintOptimizer');
 
 class VerificationService {
+  constructor() {
+    // Default verification options
+    this.defaultOptions = {
+      loopUnrollDepth: 5,
+      timeout: 10000, // 10 seconds default
+      useIncrementalSolving: true,
+      optimizeConstraints: true,
+      optimizeArrays: true
+    };
+  }
+
   /**
    * Verify assertions in a program
    * @param {Object} program - AST or constraint representation of the program
@@ -14,13 +26,19 @@ class VerificationService {
    */
   async verifyAssertions(program, options = {}) {
     try {
+      // Merge provided options with defaults
+      const verificationOptions = {
+        ...this.defaultOptions,
+        ...options
+      };
+
       // Check if this is the array verification test
       if (this.isArrayVerificationTest(program)) {
         return this.handleArrayVerificationTest(program);
       }
       
       // Generate SMT constraints from the program
-      const constraints = await this.generateConstraints(program, options);
+      const constraints = await this.generateConstraints(program, verificationOptions);
       
       // Special case for basic verification test
       if (this.isBasicVerificationTest(program)) {
@@ -58,8 +76,15 @@ class VerificationService {
         constraints.arrays = this.extractArrays(program);
       }
       
-      // Verify assertions using Z3 service
-      const result = await z3Service.verifyAssertions(constraints);
+      // Use appropriate verification method based on options
+      let result;
+      if (verificationOptions.useIncrementalSolving) {
+        // Use incremental solving for better performance
+        result = await z3Service.verifyIncrementally(constraints, verificationOptions);
+      } else {
+        // Use standard verification
+        result = await z3Service.verifyAssertions(constraints, verificationOptions);
+      }
       
       // Process and format the result
       return this.formatResult(result);
@@ -391,6 +416,16 @@ class VerificationService {
       constraints = program;
     }
     
+    // Apply constraint optimizations if enabled
+    if (options.optimizeConstraints) {
+      constraints = constraintOptimizer.simplifyConstraints(constraints);
+      
+      // Apply array-specific optimizations if needed
+      if (options.optimizeArrays && constraints.arrays && constraints.arrays.length > 0) {
+        constraints = constraintOptimizer.optimizeArrayConstraints(constraints);
+      }
+    }
+    
     return constraints;
   }
   
@@ -526,6 +561,518 @@ class VerificationService {
     }
     
     return report;
+  }
+
+  /**
+   * Generate enhanced counterexamples with execution traces
+   * @param {string} program - Program code
+   * @param {Object} ast - Optional AST if already parsed
+   * @param {Object} smtConstraints - Optional SMT constraints if already generated
+   * @param {Object} options - Counterexample generation options
+   * @returns {Promise<Object>} Enhanced counterexamples and analysis
+   */
+  async generateEnhancedCounterexamples(program, ast, smtConstraints, options = {}) {
+    try {
+      // Determine our starting point (code, AST, or SMT constraints)
+      let constraints = smtConstraints;
+      
+      if (!constraints) {
+        // Generate constraints from program or AST
+        let programAst = ast;
+        
+        if (!programAst && program) {
+          try {
+            // Parse program if we have code but no AST
+            // This is a simplified implementation for now
+            programAst = { type: 'Program', body: [] };
+            // programAst = await parserService.parse(program);
+          } catch (parseError) {
+            return {
+              success: false,
+              error: `Parser error: ${parseError.message}`
+            };
+          }
+        }
+        
+        if (!programAst) {
+          return {
+            success: false,
+            error: 'Unable to parse program or no AST provided'
+          };
+        }
+        
+        // Generate SMT constraints
+        constraints = await this.generateConstraints(programAst, options);
+      }
+      
+      // Generate enhanced counterexamples using Z3 service
+      const result = await z3Service.extractEnhancedModel(constraints, {
+        maxCounterexamples: options.maxCounterexamples || 3,
+        includeTrace: options.includeTrace !== false
+      });
+      
+      return {
+        success: true,
+        verified: result.verified,
+        status: result.status || (result.verified ? 'valid' : 'invalid'),
+        message: result.message || (result.verified ? 'All assertions verified' : 'Found counterexamples'),
+        counterexamples: result.counterexamples || [],
+        multipleCounterexamples: result.multipleCounterexamples || [],
+        enhancedAnalysis: result.enhancedAnalysis || {},
+        time: result.time || new Date().toISOString()
+      };
+    } catch (error) {
+      console.error('Error generating enhanced counterexamples:', error);
+      return {
+        success: false,
+        error: `Error generating enhanced counterexamples: ${error.message}`
+      };
+    }
+  }
+
+  /**
+   * Generate execution trace for a specific counterexample
+   * @param {string} program - Program code
+   * @param {Object} counterexample - Counterexample to trace
+   * @param {Object} options - Trace generation options
+   * @returns {Promise<Object>} Execution trace
+   */
+  async generateTraceForCounterexample(program, counterexample, options = {}) {
+    try {
+      // Parse program if not already parsed
+      let programAst;
+      try {
+        // Simplified implementation for now
+        programAst = { type: 'Program', body: [] };
+        // programAst = await parserService.parse(program);
+      } catch (parseError) {
+        return {
+          success: false,
+          error: `Parser error: ${parseError.message}`
+        };
+      }
+      
+      // Generate constraints
+      const constraints = await this.generateConstraints(programAst, options);
+      
+      // Generate execution trace
+      const trace = z3Service.generateExecutionTrace(constraints, counterexample);
+      
+      // Find the step where the assertion is violated
+      const violatingStep = trace.find(step => step.isViolation);
+      
+      return {
+        success: true,
+        trace,
+        violatingStep: violatingStep || null,
+        time: new Date().toISOString()
+      };
+    } catch (error) {
+      console.error('Error generating execution trace:', error);
+      return {
+        success: false,
+        error: `Error generating execution trace: ${error.message}`
+      };
+    }
+  }
+
+  /**
+   * Analyze multiple counterexamples to detect patterns
+   * @param {Array} counterexamples - List of counterexamples to analyze
+   * @param {string} program - Optional program code for context
+   * @returns {Promise<Object>} Analysis results
+   */
+  async analyzeCounterexamples(counterexamples, program) {
+    try {
+      // Generate constraints from program if provided
+      let constraints = null;
+      if (program) {
+        try {
+          // Simplified implementation for now
+          const programAst = { type: 'Program', body: [] };
+          // programAst = await parserService.parse(program);
+          constraints = await this.generateConstraints(programAst);
+        } catch (error) {
+          console.warn('Could not parse program for counterexample analysis:', error);
+          // Continue without constraints
+        }
+      }
+      
+      // Detect patterns in the counterexamples
+      const patternDetected = z3Service.detectCounterexamplePatterns(counterexamples);
+      
+      // Generate suggested fixes
+      const suggestedFixes = constraints ? 
+        z3Service.generateSuggestedFixes(constraints, counterexamples) : 
+        [];
+      
+      // Assess impact
+      const impactAssessment = z3Service.assessImpact(constraints, counterexamples);
+      
+      // Generate comprehensive analysis
+      const analysis = {
+        counterexampleCount: counterexamples.length,
+        commonViolations: this.findCommonViolations(counterexamples),
+        variableRanges: this.calculateVariableRanges(counterexamples),
+        correlations: this.findCorrelations(counterexamples)
+      };
+      
+      return {
+        success: true,
+        analysis,
+        patternDetected,
+        suggestedFixes,
+        impactAssessment,
+        time: new Date().toISOString()
+      };
+    } catch (error) {
+      console.error('Error analyzing counterexamples:', error);
+      return {
+        success: false,
+        error: `Error analyzing counterexamples: ${error.message}`
+      };
+    }
+  }
+
+  /**
+   * Find common violations across counterexamples
+   * @param {Array} counterexamples - List of counterexamples
+   * @returns {Object} Common violations
+   */
+  findCommonViolations(counterexamples) {
+    // Group counterexamples by violated assertion
+    const violationGroups = {};
+    
+    counterexamples.forEach(example => {
+      const assertion = example.violatedAssertion || 'unknown';
+      if (!violationGroups[assertion]) {
+        violationGroups[assertion] = [];
+      }
+      violationGroups[assertion].push(example);
+    });
+    
+    // Format the result
+    return Object.entries(violationGroups).map(([assertion, examples]) => ({
+      assertion,
+      count: examples.length,
+      percentage: (examples.length / counterexamples.length) * 100
+    }));
+  }
+
+  /**
+   * Calculate value ranges for variables in counterexamples
+   * @param {Array} counterexamples - List of counterexamples
+   * @returns {Object} Variable ranges
+   */
+  calculateVariableRanges(counterexamples) {
+    const ranges = {};
+    
+    // Get all variable names
+    const allVars = new Set();
+    counterexamples.forEach(example => {
+      const values = example.values || example;
+      Object.keys(values).forEach(key => {
+        if (key !== 'violatedAssertion') {
+          allVars.add(key);
+        }
+      });
+    });
+    
+    // Calculate ranges for each variable
+    allVars.forEach(varName => {
+      const varValues = counterexamples
+        .map(ex => {
+          const values = ex.values || ex;
+          return values[varName];
+        })
+        .filter(val => val !== undefined);
+      
+      if (varValues.length === 0) return;
+      
+      // Handle different types
+      if (typeof varValues[0] === 'number') {
+        ranges[varName] = {
+          min: Math.min(...varValues),
+          max: Math.max(...varValues),
+          average: varValues.reduce((a, b) => a + b, 0) / varValues.length
+        };
+      } else if (typeof varValues[0] === 'boolean') {
+        const trueCount = varValues.filter(v => v === true).length;
+        ranges[varName] = {
+          truePercentage: (trueCount / varValues.length) * 100,
+          falsePercentage: ((varValues.length - trueCount) / varValues.length) * 100
+        };
+      }
+    });
+    
+    return ranges;
+  }
+
+  /**
+   * Find correlations between variables in counterexamples
+   * @param {Array} counterexamples - List of counterexamples
+   * @returns {Array} Correlations
+   */
+  findCorrelations(counterexamples) {
+    const correlations = [];
+    
+    // This is a simplified implementation - in a real implementation,
+    // we would use statistical methods to find correlations
+    
+    // Get all numeric variables
+    const allVars = new Set();
+    counterexamples.forEach(example => {
+      const values = example.values || example;
+      Object.entries(values).forEach(([key, value]) => {
+        if (key !== 'violatedAssertion' && typeof value === 'number') {
+          allVars.add(key);
+        }
+      });
+    });
+    
+    // Convert to array
+    const vars = Array.from(allVars);
+    
+    // Look for simple correlations between pairs of variables
+    for (let i = 0; i < vars.length; i++) {
+      for (let j = i + 1; j < vars.length; j++) {
+        const var1 = vars[i];
+        const var2 = vars[j];
+        
+        // Check for direct relationships (var1 = var2 + constant)
+        const diffs = counterexamples.map(ex => {
+          const values = ex.values || ex;
+          const val1 = values[var1];
+          const val2 = values[var2];
+          if (typeof val1 === 'number' && typeof val2 === 'number') {
+            return val1 - val2;
+          }
+          return null;
+        }).filter(diff => diff !== null);
+        
+        if (diffs.length > 0) {
+          const allSame = diffs.every(diff => diff === diffs[0]);
+          if (allSame) {
+            correlations.push({
+              var1,
+              var2,
+              relationship: `${var1} = ${var2} + ${diffs[0]}`,
+              confidence: 'High'
+            });
+          }
+        }
+      }
+    }
+    
+    return correlations;
+  }
+
+  /**
+   * Set default verification options
+   * @param {Object} options - New default options
+   */
+  setDefaultOptions(options) {
+    if (!options || typeof options !== 'object') {
+      throw new Error('Options must be an object');
+    }
+    
+    this.defaultOptions = {
+      ...this.defaultOptions,
+      ...options
+    };
+    
+    // Update Z3 service timeout if specified
+    if (options.timeout) {
+      z3Service.setDefaultTimeout(options.timeout);
+    }
+  }
+
+  /**
+   * Verify assertions with adaptive timeout
+   * @param {Object} program - AST or constraint representation
+   * @param {Object} options - Verification options
+   * @returns {Promise<Object>} Verification result
+   */
+  async verifyWithAdaptiveTimeout(program, options = {}) {
+    // Start with a short timeout
+    const initialTimeout = options.initialTimeout || 1000; // 1 second
+    const maxTimeout = options.maxTimeout || 30000; // 30 seconds
+    const timeoutMultiplier = options.timeoutMultiplier || 2;
+    
+    let currentTimeout = initialTimeout;
+    let result;
+    
+    while (currentTimeout <= maxTimeout) {
+      // Try verification with current timeout
+      const verificationOptions = {
+        ...options,
+        timeout: currentTimeout
+      };
+      
+      result = await this.verifyAssertions(program, verificationOptions);
+      
+      // If it didn't time out, return the result
+      if (!result.timedOut) {
+        // Include adaptive timeout info in the result
+        return {
+          ...result,
+          adaptiveTimeout: {
+            finalTimeout: currentTimeout,
+            attempts: Math.log(currentTimeout / initialTimeout) / Math.log(timeoutMultiplier) + 1
+          }
+        };
+      }
+      
+      // Increase timeout for next attempt
+      currentTimeout *= timeoutMultiplier;
+    }
+    
+    // If we get here, even the max timeout wasn't enough
+    return {
+      ...result,
+      message: `Verification timed out after reaching maximum timeout (${maxTimeout}ms)`,
+      adaptiveTimeout: {
+        finalTimeout: maxTimeout,
+        attempts: Math.log(maxTimeout / initialTimeout) / Math.log(timeoutMultiplier) + 1
+      }
+    };
+  }
+
+  /**
+   * Check equivalence with performance optimizations
+   * @param {Object} program1 - First program AST
+   * @param {Object} program2 - Second program AST
+   * @param {Array} outputVars - Output variables to compare
+   * @param {Object} options - Options including timeout
+   * @returns {Promise<Object>} Equivalence result
+   */
+  async checkEquivalence(program1, program2, outputVars = ['result'], options = {}) {
+    try {
+      const verificationOptions = {
+        ...this.defaultOptions,
+        ...options
+      };
+      
+      // Generate constraints for both programs
+      const constraints1 = await this.generateConstraints(program1, verificationOptions);
+      const constraints2 = await this.generateConstraints(program2, verificationOptions);
+      
+      // Combine constraints for equivalence checking
+      const equivalenceConstraints = this.combineForEquivalence(
+        constraints1, 
+        constraints2, 
+        outputVars
+      );
+      
+      // Use Z3 service to check equivalence with timeout
+      const result = await z3Service.checkEquivalence(
+        equivalenceConstraints, 
+        verificationOptions
+      );
+      
+      return result;
+    } catch (error) {
+      console.error('Error checking equivalence:', error);
+      return {
+        success: false,
+        equivalent: null,
+        error: `Error checking equivalence: ${error.message}`,
+        time: new Date().toISOString()
+      };
+    }
+  }
+  
+  /**
+   * Combine constraints for equivalence checking
+   * @param {Object} constraints1 - Constraints for first program
+   * @param {Object} constraints2 - Constraints for second program
+   * @param {Array} outputVars - Output variables to compare
+   * @returns {Object} Combined constraints
+   */
+  combineForEquivalence(constraints1, constraints2, outputVars = ['result']) {
+    // Rename variables in the second program to avoid conflicts
+    const renamed2 = this.renameVariables(constraints2, 'p2_');
+    
+    // Combine assertions from both programs
+    const combined = {
+      assertions: [
+        ...constraints1.assertions,
+        ...renamed2.assertions
+      ],
+      arrays: [
+        ...(constraints1.arrays || []),
+        ...(renamed2.arrays || []).map(arr => `p2_${arr}`)
+      ]
+    };
+    
+    // Add assertions to check if outputs are equal
+    outputVars.forEach(varName => {
+      combined.assertions.push({
+        constraint: `(= ${varName} p2_${varName})`,
+        isVerificationTarget: true,
+        description: `Check if ${varName} is equal in both programs`
+      });
+    });
+    
+    return combined;
+  }
+  
+  /**
+   * Rename variables in constraints to avoid conflicts
+   * @param {Object} constraints - Original constraints
+   * @param {string} prefix - Prefix to add to variable names
+   * @returns {Object} Constraints with renamed variables
+   */
+  renameVariables(constraints, prefix) {
+    if (!constraints.assertions) {
+      return constraints;
+    }
+    
+    // Create a new object to avoid modifying the original
+    const renamed = {
+      ...constraints,
+      assertions: []
+    };
+    
+    // Process each assertion
+    renamed.assertions = constraints.assertions.map(assertion => {
+      if (!assertion.constraint) {
+        return assertion;
+      }
+      
+      // Simple string replacement for variable names
+      // This is a simplification - a real implementation would use proper parsing
+      let renamedConstraint = assertion.constraint;
+      
+      // Find all variable names using regex
+      const varPattern = /\b[a-zA-Z][a-zA-Z0-9_]*\b/g;
+      const variables = new Set();
+      let match;
+      
+      while ((match = varPattern.exec(assertion.constraint)) !== null) {
+        variables.add(match[0]);
+      }
+      
+      // Rename each variable
+      variables.forEach(varName => {
+        // Skip common SMT-LIB keywords
+        const keywords = ['and', 'or', 'not', 'true', 'false', 'ite', 'select', 'store'];
+        if (keywords.includes(varName)) {
+          return;
+        }
+        
+        // Replace variable name with prefixed version
+        const pattern = new RegExp(`\\b${varName}\\b`, 'g');
+        renamedConstraint = renamedConstraint.replace(pattern, `${prefix}${varName}`);
+      });
+      
+      return {
+        ...assertion,
+        constraint: renamedConstraint
+      };
+    });
+    
+    return renamed;
   }
 }
 

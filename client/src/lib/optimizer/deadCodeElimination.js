@@ -1,151 +1,101 @@
 /**
  * Dead Code Elimination Optimization
  * 
- * Removes code that has no effect on program output
+ * Identifies and removes code that has no effect on the program's output
  */
 
-import { DataFlowAnalysis, DataFlowDirection, JoinOperation } from './dataFlowAnalysis.js';
+import { DataFlowAnalysis, DataFlowDirection, JoinOperation, LiveVariableAnalysis } from './dataFlowAnalysis.js';
 import { buildSSAGraph } from './ssaGraph.js';
 
 /**
- * Live Variables Analysis for dead code elimination
+ * Create a default SSA program for error handling
+ * @returns {object} Default SSA program
  */
-class LiveVariableAnalysis extends DataFlowAnalysis {
-  constructor() {
-    // Live variable analysis is a backward dataflow analysis
-    super(DataFlowDirection.BACKWARD, JoinOperation.UNION);
-  }
-  
-  /**
-   * Initial value is an empty set (no variables live)
-   */
-  initialValue() {
-    return new Set();
-  }
-  
-  /**
-   * Default value is an empty set
-   */
-  defaultValue() {
-    return new Set();
-  }
-  
-  /**
-   * Union of two sets (join operation)
-   */
-  join(set1, set2) {
-    const result = new Set(set1);
-    for (const item of set2) {
-      result.add(item);
+function createDefaultSSA() {
+  return {
+    blocks: [{
+      label: 'entry',
+      instructions: [],
+      terminator: { type: 'Jump', target: 'exit' }
+    }, {
+      label: 'exit',
+      instructions: [],
+      terminator: null
+    }],
+    entryBlock: 'entry',
+    exitBlock: 'exit',
+    metadata: {
+      synthetic: true,
+      message: 'Generated fallback SSA structure for dead code elimination'
     }
-    return result;
-  }
+  };
+}
+
+/**
+ * Create a default SSA program structure, preserving metadata from original
+ * @param {object} original - Original program (possibly invalid)
+ * @returns {object} A minimal valid SSA program
+ */
+function createDefaultSSAFromProgram(original) {
+  const defaultProgram = createDefaultSSA();
   
-  /**
-   * Transfer function: compute live variables before a block
-   * based on variables used in the block and live after the block
-   */
-  transferFunction(node, outSet, graph) {
-    // Start with the output set (variables live at exit)
-    const result = new Set(outSet);
-    
-    // Process instructions in reverse order
-    const instructions = [...node.instructions].reverse();
-    
-    // Process block terminator if present
-    if (node.blockId && graph.nodes.has(node.blockId)) {
-      const originalNode = graph.nodes.get(node.blockId);
-      if (originalNode && originalNode.terminator) {
-        // Add variables used in the terminator condition
-        if (originalNode.terminator.condition) {
-          const usedVars = this.getUsedVariables(originalNode.terminator.condition);
-          for (const v of usedVars) {
-            result.add(v);
-          }
-        }
-      }
+  // Preserve any metadata or properties from the original that are valid
+  if (original) {
+    if (original.metadata && typeof original.metadata === 'object') {
+      defaultProgram.metadata = {
+        ...defaultProgram.metadata,
+        ...original.metadata,
+        preservedFromOriginal: true
+      };
     }
     
-    // Process instructions
-    for (const instr of instructions) {
-      if (!instr) continue;
-      
-      if (instr.type === 'Assignment') {
-        // Remove the target (it's defined here)
-        result.delete(instr.target);
-        
-        // Add variables used in the value
-        const usedVars = this.getUsedVariables(instr.value);
-        for (const v of usedVars) {
-          result.add(v);
-        }
-      } else if (instr.type === 'Assert') {
-        // Add variables used in the assertion
-        const usedVars = this.getUsedVariables(instr.condition);
-        for (const v of usedVars) {
-          result.add(v);
-        }
+    // Preserve other top-level properties if they exist
+    const validProperties = ['entryBlock', 'exitBlock', 'variables', 'constants', 'ast'];
+    for (const prop of validProperties) {
+      if (original[prop] !== undefined) {
+        defaultProgram[prop] = original[prop];
       }
     }
-    
-    // Process phi functions
-    const phiFunctions = node.phiFunctions || [];
-    for (const phi of phiFunctions) {
-      if (!phi) continue;
-      
-      // Remove the target (it's defined here)
-      result.delete(phi.target);
-      
-      // Add all source variables as they're used
-      for (const source of phi.sources) {
-        result.add(source);
-      }
-    }
-    
-    return result;
   }
   
-  /**
-   * Extract variables used in an expression
-   * @param {object} expr - Expression to analyze
-   * @returns {Set<string>} Set of variable names
-   */
-  getUsedVariables(expr) {
-    const variables = new Set();
-    
-    if (!expr) return variables;
-    
-    const visitNode = (node) => {
-      if (!node || typeof node !== 'object') return;
-      
-      // Check node type
-      if (node.type === 'Variable') {
-        variables.add(node.name);
-        return;
-      }
-      
-      // Recursively visit child nodes
-      for (const key in node) {
-        if (node[key] && typeof node[key] === 'object') {
-          visitNode(node[key]);
-        }
-      }
-    };
-    
-    visitNode(expr);
-    return variables;
-  }
+  return defaultProgram;
+}
+
+/**
+ * Check if an expression might have side effects
+ * @param {object} expr - Expression to check 
+ * @returns {boolean} True if the expression might have side effects
+ */
+function hasSideEffects(expr) {
+  if (!expr) return false;
   
-  /**
-   * Compare two sets for equality
-   */
-  equals(set1, set2) {
-    if (set1.size !== set2.size) return false;
-    for (const item of set1) {
-      if (!set2.has(item)) return false;
-    }
+  // Function calls may have side effects
+  if (expr.type === 'CallExpression') {
     return true;
   }
+  
+  // Check if the expression contains any subexpressions with side effects
+  if (expr.left) {
+    if (hasSideEffects(expr.left)) return true;
+  }
+  
+  if (expr.right) {
+    if (hasSideEffects(expr.right)) return true;
+  }
+  
+  if (expr.condition) {
+    if (hasSideEffects(expr.condition)) return true;
+  }
+  
+  if (expr.consequent) {
+    if (hasSideEffects(expr.consequent)) return true;
+  }
+  
+  if (expr.alternate) {
+    if (hasSideEffects(expr.alternate)) return true;
+  }
+  
+  return false;
 }
 
 /**
@@ -180,50 +130,33 @@ export function eliminateDeadCode(ssaProgram) {
     let optimizationsApplied = false;
     let instructionsRemoved = 0;
     
-    // Apply the results to eliminate dead code
+    // Apply the results to create an optimized program
     for (let i = 0; i < optimizedProgram.blocks.length; i++) {
       const block = optimizedProgram.blocks[i];
       if (!block) continue;
       
-      // Skip blocks without instructions
-      if (!block.instructions || !Array.isArray(block.instructions)) {
-        block.instructions = [];
-        continue;
-      }
-      
       const liveVars = results.get(block.label) || new Set();
-      const originalInstructions = [...block.instructions]; // Clone for comparison
       
-      // Filter out instructions that assign to dead variables
-      const newInstructions = block.instructions.filter(instr => {
+      // Remove dead instructions
+      const originalLength = block.instructions.length;
+      block.instructions = block.instructions.filter(instr => {
         if (!instr) return false;
         
-        // Keep assertions and non-assignment instructions
-        if (instr.type !== 'Assignment') return true;
-        
-        // Keep assignments to live variables
-        if (liveVars.has(instr.target)) return true;
-        
-        // Keep assignments that might have side effects
-        if (mightHaveSideEffects(instr.value)) return true;
-        
-        // This instruction is dead code
-        instructionsRemoved++;
-        return false;
+        if (instr.type === 'Assignment') {
+          // Keep if target is live or has side effects
+          const isLive = liveVars.has(instr.target) || hasSideEffects(instr.value);
+          if (!isLive) {
+            instructionsRemoved++;
+            return false;
+          }
+        }
+        return true;
       });
       
-      // Check if any instructions were removed
-      if (newInstructions.length < originalInstructions.length) {
+      if (block.instructions.length < originalLength) {
         optimizationsApplied = true;
-        block.instructions = newInstructions;
         block.optimized = true;
-        block.metadata = {
-          ...block.metadata,
-          deadCodeElimination: {
-            liveVars: Array.from(liveVars),
-            removed: originalInstructions.length - newInstructions.length
-          }
-        };
+        block.optimizationType = 'DeadCodeElimination';
       }
     }
     
@@ -236,198 +169,10 @@ export function eliminateDeadCode(ssaProgram) {
     
     return optimizedProgram;
   } catch (error) {
-    console.error('DeadCodeElimination: Error during optimization', error);
-    
-    // Return a valid program structure with error information
-    return createDefaultSSAFromProgram(ssaProgram, {
-      error: `Dead code elimination failed: ${error.message}`,
-      deadCodeEliminationApplied: false
-    });
+    console.error('Error in dead code elimination:', error);
+    return ssaProgram;
   }
 }
 
-/**
- * Create a default SSA program structure
- * @returns {object} A minimal valid SSA program
- */
-function createDefaultSSA() {
-  // Create some synthetic instructions with potential for dead code elimination
-  const instructions = [
-    {
-      type: 'Assignment',
-      target: 'x',
-      value: { type: 'IntegerLiteral', value: 42 },
-      synthetic: true
-    },
-    {
-      type: 'Assignment',
-      target: 'y',
-      value: { type: 'IntegerLiteral', value: 10 },
-      synthetic: true
-    },
-    {
-      type: 'Assignment',
-      target: 'sum',
-      value: {
-        type: 'BinaryExpression',
-        left: { type: 'Variable', name: 'x' },
-        operator: '+',
-        right: { type: 'Variable', name: 'y' }
-      },
-      synthetic: true
-    },
-    {
-      type: 'Assignment',
-      target: 'unused',
-      value: {
-        type: 'BinaryExpression',
-        left: { type: 'Variable', name: 'x' },
-        operator: '*',
-        right: { type: 'IntegerLiteral', value: 2 }
-      },
-      synthetic: true
-    },
-    {
-      type: 'Assignment',
-      target: 'result',
-      value: { type: 'Variable', name: 'sum' },
-      synthetic: true
-    }
-  ];
-  
-  return {
-    blocks: [{
-      label: 'entry',
-      instructions,
-      terminator: { type: 'Jump', target: 'exit' }
-    }, {
-      label: 'exit',
-      instructions: [],
-      terminator: null
-    }],
-    entryBlock: 'entry',
-    exitBlock: 'exit',
-    metadata: {
-      synthetic: true,
-      message: 'Generated fallback SSA structure for dead code elimination',
-      deadCodeEliminationApplied: false
-    }
-  };
-}
-
-/**
- * Create a default SSA program structure, preserving metadata from original
- * @param {object} original - Original program (possibly invalid)
- * @param {object} additionalMetadata - Additional metadata to add
- * @returns {object} A minimal valid SSA program
- */
-function createDefaultSSAFromProgram(original, additionalMetadata = {}) {
-  const defaultProgram = createDefaultSSA();
-  
-  // Preserve any metadata or properties from the original that are valid
-  if (original) {
-    if (original.metadata && typeof original.metadata === 'object') {
-      defaultProgram.metadata = {
-        ...defaultProgram.metadata,
-        ...original.metadata,
-        ...additionalMetadata
-      };
-    } else {
-      defaultProgram.metadata = {
-        ...defaultProgram.metadata,
-        ...additionalMetadata
-      };
-    }
-    
-    // Preserve other top-level properties if they exist and are valid
-    const validProperties = ['entryBlock', 'exitBlock', 'variables', 'constants'];
-    for (const prop of validProperties) {
-      if (original[prop] !== undefined) {
-        defaultProgram[prop] = original[prop];
-      }
-    }
-    
-    // Try to extract variable names if available
-    try {
-      if (original.ast && original.ast.statements) {
-        const variables = new Set();
-        
-        // Extract variables from AST
-        original.ast.statements.forEach(stmt => {
-          if (stmt.type === 'Assignment' && stmt.target && stmt.target.name) {
-            variables.add(stmt.target.name);
-          }
-        });
-        
-        // If we found variables, update our default program
-        if (variables.size > 0) {
-          const instructions = [];
-          let index = 0;
-          
-          // Create assignments for each variable
-          for (const varName of variables) {
-            instructions.push({
-              type: 'Assignment',
-              target: varName,
-              value: { type: 'IntegerLiteral', value: index++ },
-              synthetic: true
-            });
-          }
-          
-          // Add a result variable that uses all other variables
-          if (variables.size > 0) {
-            let resultExpr = null;
-            for (const varName of variables) {
-              if (!resultExpr) {
-                resultExpr = { type: 'Variable', name: varName };
-              } else {
-                resultExpr = {
-                  type: 'BinaryExpression',
-                  left: resultExpr,
-                  operator: '+',
-                  right: { type: 'Variable', name: varName }
-                };
-              }
-            }
-            
-            instructions.push({
-              type: 'Assignment',
-              target: 'result',
-              value: resultExpr,
-              synthetic: true
-            });
-          }
-          
-          // Replace the default instructions
-          defaultProgram.blocks[0].instructions = instructions;
-        }
-      }
-    } catch (error) {
-      console.warn('Error extracting variables from original program:', error.message);
-    }
-  }
-  
-  return defaultProgram;
-}
-
-/**
- * Check if an expression might have side effects
- * @param {object} expr - Expression to check
- * @returns {boolean} True if expression might have side effects
- */
-function mightHaveSideEffects(expr) {
-  if (!expr || typeof expr !== 'object') return false;
-  
-  // Expressions that could have side effects
-  if (expr.type === 'FunctionCall') return true;
-  if (expr.type === 'ArrayAccess') return true;
-  
-  // Recursively check child nodes
-  for (const key in expr) {
-    if (expr[key] && typeof expr[key] === 'object') {
-      if (mightHaveSideEffects(expr[key])) return true;
-    }
-  }
-  
-  return false;
-}
+// Add alias for imported name consistency
+export const deadCodeElimination = eliminateDeadCode;

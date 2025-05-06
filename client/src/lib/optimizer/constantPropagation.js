@@ -15,6 +15,9 @@ const Lattice = {
   NAC: 'not-a-constant'    // Variable is not a constant
 };
 
+// Add a debug flag at the top
+const DEBUG = true;
+
 /**
  * Constant propagation data flow analysis
  */
@@ -137,15 +140,46 @@ class ConstantPropagationAnalysis extends DataFlowAnalysis {
       return { state: Lattice.NAC };
     }
     
+    if (DEBUG) {
+      console.log(`DEBUG evaluateExpression: ${expr.type}`, 
+        expr.type === 'Variable' || expr.type === 'Identifier' ? 
+        `name=${expr.name}, ssaVersion=${expr.ssaVersion}` : '');
+    }
+    
     switch (expr.type) {
       case 'IntegerLiteral':
+        if (DEBUG) console.log(`DEBUG found IntegerLiteral: ${expr.value}`);
         return { state: Lattice.CONSTANT, value: expr.value };
         
       case 'BooleanLiteral':
+        if (DEBUG) console.log(`DEBUG found BooleanLiteral: ${expr.value}`);
         return { state: Lattice.CONSTANT, value: expr.value };
         
       case 'Variable':
-        return valueMap.get(expr.name) || this.defaultValue();
+      case 'Identifier':
+        // Try both with and without ssaVersion
+        let varName = expr.name;
+        let result = valueMap.get(varName); 
+        
+        if (DEBUG) {
+          console.log(`DEBUG Variable lookup: ${varName} -> ${result ? result.state : 'not found'}`);
+        }
+        
+        // Try with SSA version if available
+        if (expr.ssaVersion !== undefined) {
+          let ssaName = `${expr.name}_${expr.ssaVersion}`;
+          let ssaResult = valueMap.get(ssaName);
+          
+          if (DEBUG) {
+            console.log(`DEBUG SSA lookup: ${ssaName} -> ${ssaResult ? ssaResult.state : 'not found'}`);
+          }
+          
+          if (ssaResult) {
+            result = ssaResult;
+          }
+        }
+        
+        return result || this.defaultValue();
         
       case 'BinaryExpression':
         const left = this.evaluateExpression(expr.left, valueMap);
@@ -237,80 +271,186 @@ export function propagateConstants(ssaProgram) {
   // Create a deep clone to avoid modifying the original
   const optimizedProgram = JSON.parse(JSON.stringify(ssaProgram));
   
-  // Build SSA graph
-  const graph = buildSSAGraph(optimizedProgram);
+  // Step 1: Build a map of all constants
+  const constants = new Map();
   
-  // Run constant propagation analysis
-  const analysis = new ConstantPropagationAnalysis();
-  const { results } = analysis.analyze(graph);
-  
-  // Track if any optimizations were applied
-  let optimizationsApplied = false;
-  
-  // Apply the results to create an optimized program
-  for (let i = 0; i < optimizedProgram.blocks.length; i++) {
-    const block = optimizedProgram.blocks[i];
-    if (!block) continue;
+  // Pre-scan all blocks for constants
+  for (const block of optimizedProgram.blocks) {
+    if (!block || !block.instructions) continue;
     
-    const blockConstants = results.get(block.label) || new Map();
-    
-    // Replace variable uses with constants
-    for (let j = 0; j < block.instructions.length; j++) {
-      const instr = block.instructions[j];
-      if (!instr) continue;
-      
-      if (instr.type === 'Assignment') {
-        const optimizedValue = replaceConstants(instr.value, blockConstants);
-        
-        // If the optimized value is different from the original, mark the optimization
-        if (JSON.stringify(optimizedValue) !== JSON.stringify(instr.value)) {
-          block.instructions[j] = {
-            ...instr,
-            value: optimizedValue,
-            optimized: true,
-            originalValue: JSON.parse(JSON.stringify(instr.value))
-          };
-          optimizationsApplied = true;
+    for (const instr of block.instructions) {
+      if (instr?.type === 'Assignment') {
+        // Direct constant assignments
+        if (instr.value?.type === 'IntLiteral' || instr.value?.type === 'IntegerLiteral' || 
+            instr.value?.type === 'BoolLiteral' || instr.value?.type === 'BooleanLiteral') {
+          constants.set(instr.target, instr.value.value);
         }
       }
     }
+  }
+  
+  // Step 2: Propagate constants
+  let optimizationsApplied = false;
+  let constantsPropagated = 0;
+  
+  for (const block of optimizedProgram.blocks) {
+    if (!block || !block.instructions) continue;
     
-    // Optimize terminators
-    if (block.terminator && block.terminator.condition) {
-      const optimizedCondition = replaceConstants(block.terminator.condition, blockConstants);
+    for (let i = 0; i < block.instructions.length; i++) {
+      const instr = block.instructions[i];
+      if (!instr || instr.type !== 'Assignment') continue;
       
-      // If the condition is now a constant, we can simplify the branch
-      const conditionChanged = JSON.stringify(optimizedCondition) !== JSON.stringify(block.terminator.condition);
+      // Skip if this is directly a constant
+      if (instr.value?.type === 'IntLiteral' || instr.value?.type === 'IntegerLiteral' ||
+          instr.value?.type === 'BoolLiteral' || instr.value?.type === 'BooleanLiteral') continue;
       
-      if (conditionChanged) {
-        const originalCondition = JSON.parse(JSON.stringify(block.terminator.condition));
+      // Look for binary expressions where both operands are constants
+      if (instr.value?.type === 'BinaryExpression') {
+        const expr = instr.value;
         
-        if (optimizedCondition.type === 'BooleanLiteral' || 
-            optimizedCondition.type === 'IntegerLiteral') {
+        let leftValue = null;
+        let rightValue = null;
+        
+        // Get left operand value
+        if (expr.left?.type === 'Identifier' || expr.left?.type === 'Variable') {
+          const varName = expr.left.name;
           
-          const isTrue = optimizedCondition.value !== 0 && optimizedCondition.value !== false;
+          // Try with SSA version if available
+          let lookupName = varName;
+          if (expr.left.ssaVersion !== undefined) {
+            lookupName = `${varName}_${expr.left.ssaVersion}`;
+          }
           
-          block.terminator = {
-            ...block.terminator,
-            condition: optimizedCondition,
-            optimized: true,
-            originalCondition: originalCondition,
-            
-            // For branch terminator, convert to jump if possible
-            ...(block.terminator.type === 'Branch' ? {
-              type: 'Jump',
-              target: isTrue ? block.terminator.thenTarget : block.terminator.elseTarget
-            } : {})
-          };
-        } else {
-          block.terminator = {
-            ...block.terminator,
-            condition: optimizedCondition,
-            optimized: true,
-            originalCondition: originalCondition
-          };
+          if (constants.has(lookupName)) {
+            leftValue = constants.get(lookupName);
+          } else if (constants.has(varName)) {
+            leftValue = constants.get(varName);
+          }
+          
+        } else if (expr.left?.type === 'IntLiteral' || expr.left?.type === 'IntegerLiteral' ||
+                  expr.left?.type === 'BoolLiteral' || expr.left?.type === 'BooleanLiteral') {
+          leftValue = expr.left.value;
         }
-        optimizationsApplied = true;
+        
+        // Get right operand value
+        if (expr.right?.type === 'Identifier' || expr.right?.type === 'Variable') {
+          const varName = expr.right.name;
+          
+          // Try with SSA version if available
+          let lookupName = varName;
+          if (expr.right.ssaVersion !== undefined) {
+            lookupName = `${varName}_${expr.right.ssaVersion}`;
+          }
+          
+          if (constants.has(lookupName)) {
+            rightValue = constants.get(lookupName);
+          } else if (constants.has(varName)) {
+            rightValue = constants.get(varName);
+          }
+          
+        } else if (expr.right?.type === 'IntLiteral' || expr.right?.type === 'IntegerLiteral' ||
+                  expr.right?.type === 'BoolLiteral' || expr.right?.type === 'BooleanLiteral') {
+          rightValue = expr.right.value;
+        }
+        
+        // If both operands are constants, fold the expression
+        if (leftValue !== null && rightValue !== null) {
+          let resultValue;
+          switch (expr.operator) {
+            case '+': resultValue = leftValue + rightValue; break;
+            case '-': resultValue = leftValue - rightValue; break;
+            case '*': resultValue = leftValue * rightValue; break;
+            case '/': resultValue = rightValue !== 0 ? Math.floor(leftValue / rightValue) : null; break;
+            case '%': resultValue = rightValue !== 0 ? leftValue % rightValue : null; break;
+            case '<': resultValue = leftValue < rightValue; break;
+            case '<=': resultValue = leftValue <= rightValue; break;
+            case '>': resultValue = leftValue > rightValue; break;
+            case '>=': resultValue = leftValue >= rightValue; break;
+            case '==': resultValue = leftValue === rightValue; break;
+            case '!=': resultValue = leftValue !== rightValue; break;
+            case '&&': resultValue = leftValue && rightValue; break;
+            case '||': resultValue = leftValue || rightValue; break;
+            default: resultValue = null;
+          }
+          
+          if (resultValue !== null) {
+            // Get the correct type for the literal
+            const type = typeof resultValue === 'boolean' ? 'BooleanLiteral' : 'IntegerLiteral';
+            
+            // Replace with optimized constant
+            block.instructions[i] = {
+              ...instr,
+              value: { type, value: resultValue },
+              optimized: true,
+              optimizationType: 'ConstantPropagation',
+              originalValue: JSON.parse(JSON.stringify(instr.value))
+            };
+            
+            optimizationsApplied = true;
+            constantsPropagated++;
+            
+            // Add to constants map for further propagation
+            constants.set(instr.target, resultValue);
+          }
+        }
+      }
+      
+      // Handle unary expressions
+      if (instr.value?.type === 'UnaryExpression') {
+        const expr = instr.value;
+        
+        let operandValue = null;
+        
+        // Get operand value
+        if (expr.operand?.type === 'Identifier' || expr.operand?.type === 'Variable') {
+          const varName = expr.operand.name;
+          
+          // Try with SSA version if available
+          let lookupName = varName;
+          if (expr.operand.ssaVersion !== undefined) {
+            lookupName = `${varName}_${expr.operand.ssaVersion}`;
+          }
+          
+          if (constants.has(lookupName)) {
+            operandValue = constants.get(lookupName);
+          } else if (constants.has(varName)) {
+            operandValue = constants.get(varName);
+          }
+          
+        } else if (expr.operand?.type === 'IntLiteral' || expr.operand?.type === 'IntegerLiteral' ||
+                  expr.operand?.type === 'BoolLiteral' || expr.operand?.type === 'BooleanLiteral') {
+          operandValue = expr.operand.value;
+        }
+        
+        // If operand is a constant, fold the expression
+        if (operandValue !== null) {
+          let resultValue;
+          switch (expr.operator) {
+            case '-': resultValue = -operandValue; break;
+            case '!': resultValue = !operandValue; break;
+            default: resultValue = null;
+          }
+          
+          if (resultValue !== null) {
+            // Get the correct type for the literal
+            const type = typeof resultValue === 'boolean' ? 'BooleanLiteral' : 'IntegerLiteral';
+            
+            // Replace with optimized constant
+            block.instructions[i] = {
+              ...instr,
+              value: { type, value: resultValue },
+              optimized: true,
+              optimizationType: 'ConstantPropagation',
+              originalValue: JSON.parse(JSON.stringify(instr.value))
+            };
+            
+            optimizationsApplied = true;
+            constantsPropagated++;
+            
+            // Add to constants map for further propagation
+            constants.set(instr.target, resultValue);
+          }
+        }
       }
     }
   }
@@ -318,11 +458,15 @@ export function propagateConstants(ssaProgram) {
   // Add metadata to indicate if optimizations were applied
   optimizedProgram.metadata = {
     ...optimizedProgram.metadata,
-    constantPropagationApplied: optimizationsApplied
+    constantPropagationApplied: optimizationsApplied,
+    constantsPropagated
   };
   
   return optimizedProgram;
 }
+
+// Add alias for imported name consistency
+export const constantPropagation = propagateConstants;
 
 /**
  * Replace variables with known constant values
@@ -333,8 +477,18 @@ export function propagateConstants(ssaProgram) {
 function replaceConstants(expr, constants) {
   if (!expr || !constants) return expr;
   
-  if (expr.type === 'Variable') {
-    const constVal = constants.get(expr.name);
+  if (expr.type === 'Variable' || expr.type === 'Identifier') {
+    // First try to get by the full variable name (with SSA version)
+    let fullVarName = expr.name;
+    if (expr.ssaVersion !== undefined) {
+      fullVarName = `${expr.name}_${expr.ssaVersion}`;
+    }
+    
+    // Try to get constant value by both the full name and simple name
+    let constVal = constants.get(fullVarName);
+    if (!constVal) {
+      constVal = constants.get(expr.name);
+    }
     
     // If variable is a known constant, replace it
     if (constVal && constVal.state === Lattice.CONSTANT) {
@@ -342,7 +496,8 @@ function replaceConstants(expr, constants) {
       return {
         type,
         value: constVal.value,
-        originalVariable: expr.name
+        originalVariable: expr.name,
+        originalVersion: expr.ssaVersion
       };
     }
     

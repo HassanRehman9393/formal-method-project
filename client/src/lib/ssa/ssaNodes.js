@@ -141,3 +141,8 @@ export class Assignment {
     this.value = value;   // Value expression (can be complex object)
   }
 }
+
+// Export aliases to match imports in ssaTransformer.js
+export const SSANode = Block;
+export const PhiNode = PhiFunction;
+export const VariableNode = Variable;

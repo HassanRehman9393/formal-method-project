@@ -404,29 +404,13 @@ class CFGBuilder {
 }
 
 /**
- * Extract a control flow graph from an AST
+ * Convenience function to build a CFG from an AST
  * @param {object} ast - The AST to process
- * @returns {object} The control flow graph
+ * @returns {CFG} The constructed control flow graph
  */
-export function extractControlFlow(ast) {
-  try {
-    const builder = new CFGBuilder();
-    return builder.buildCFG(ast);
-  } catch (error) {
-    console.error('Error extracting control flow:', error);
-    
-    // Return a minimal valid CFG
-    const cfg = new CFG();
-    const entryLabel = 'error_entry';
-    const exitLabel = 'error_exit';
-    
-    const entryNode = cfg.createNode(entryLabel);
-    const exitNode = cfg.createNode(exitLabel);
-    
-    cfg.addEdge(entryLabel, exitLabel);
-    cfg.setEntryNode(entryLabel);
-    cfg.setExitNode(exitLabel);
-    
-    return cfg;
-  }
+export function buildCFG(ast) {
+  const builder = new CFGBuilder();
+  return builder.buildCFG(ast);
 }
+
+export { CFG, CFGNode, CFGBuilder };
