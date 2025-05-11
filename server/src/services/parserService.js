@@ -11,6 +11,7 @@ class ParserService {
     this.parser = null;
     this.grammar = null;
     this.initialized = false;
+    console.log('[ParserService] Service initialized');
   }
   
   /**
@@ -27,9 +28,9 @@ class ParserService {
       
       // For now, we'll create a simple placeholder parser
       this.initialized = true;
-      console.log('Parser initialized successfully');
+      console.log('[ParserService] Parser initialized successfully');
     } catch (error) {
-      console.error('Failed to initialize parser:', error);
+      console.error('[ParserService] Failed to initialize parser:', error);
       throw error;
     }
   }
@@ -41,6 +42,7 @@ class ParserService {
    * @returns {Promise<Object>} Parsing result with AST or error
    */
   async parse(programCode, options = {}) {
+    console.log('[ParserService] Parsing program:', programCode?.substring(0, 30) + '...');
     await this.initialize();
     
     try {
@@ -53,13 +55,14 @@ class ParserService {
       
       // For demonstration, we'll do some very basic "parsing"
       const ast = this.mockParser(programCode);
+      console.log('[ParserService] Parsing successful');
       
       return {
         success: true,
         ast
       };
     } catch (error) {
-      console.error('Error parsing program:', error);
+      console.error('[ParserService] Error parsing program:', error);
       return {
         success: false,
         error: error.message,
@@ -74,6 +77,7 @@ class ParserService {
    * @returns {Promise<Object>} Validation result
    */
   async validate(programCode) {
+    console.log('[ParserService] Validating program');
     try {
       const result = await this.parse(programCode);
       return {
@@ -95,6 +99,7 @@ class ParserService {
    * @returns {string|Object} Visualization result
    */
   visualize(ast, format = 'json') {
+    console.log('[ParserService] Visualizing AST in format:', format);
     if (!ast) {
       return format === 'json' ? {} : 'No AST provided';
     }
@@ -237,4 +242,71 @@ class ParserService {
   }
 }
 
-module.exports = new ParserService();
+// Create a singleton instance of the parser service
+const parserService = new ParserService();
+console.log('[ParserService] Singleton instance created');
+
+// Export the service methods
+module.exports = {
+  /**
+   * Parse a program into an AST
+   * @param {string} program - Program code
+   * @param {Object} options - Parsing options
+   * @returns {Promise<Object>} Parsing result with AST
+   */
+  parseProgram: async (program, options) => {
+    console.log('[ParserService] parseProgram called with program:', program?.substring(0, 30) + '...');
+    
+    if (!program) {
+      console.error('[ParserService] No program provided');
+      return {
+        success: false,
+        error: 'No program code provided'
+      };
+    }
+    
+    try {
+      const result = await parserService.parse(program, options);
+      console.log('[ParserService] Parse result success:', result.success);
+      
+      // Ensure we're returning a valid AST object even if parse didn't fully succeed
+      if (!result.ast && result.success) {
+        console.warn('[ParserService] Parse succeeded but no AST was returned, creating basic AST');
+        // Create a minimal valid AST if none was returned
+        result.ast = {
+          type: 'Program',
+          body: []
+        };
+      }
+      
+      return result;
+    } catch (error) {
+      console.error('[ParserService] Error in parseProgram:', error);
+      return {
+        success: false,
+        error: `Parser error: ${error.message}`
+      };
+    }
+  },
+  
+  /**
+   * Validate program syntax
+   * @param {string} program - Program code
+   * @returns {Promise<Object>} Validation result
+   */
+  validateProgram: async (program) => {
+    console.log('[ParserService] validateProgram called');
+    return parserService.validate(program);
+  },
+  
+  /**
+   * Visualize an AST
+   * @param {Object} ast - Abstract Syntax Tree
+   * @param {string} format - Output format
+   * @returns {string|Object} Visualization result
+   */
+  visualizeAST: (ast, format) => {
+    console.log('[ParserService] visualizeAST called');
+    return parserService.visualize(ast, format);
+  }
+};

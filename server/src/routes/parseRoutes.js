@@ -5,6 +5,7 @@
 const express = require('express');
 const router = express.Router();
 const parserService = require('../services/parserService');
+const ssaService = require('../services/ssaService');
 
 /**
  * Parse program code into AST
@@ -36,8 +37,8 @@ router.post('/', async (req, res) => {
       });
     }
     
-    // Parse the program code
-    const result = await parserService.parse(programCode, options);
+    // Parse the program code - use parseProgram instead of parse
+    const result = await parserService.parseProgram(programCode, options);
     
     if (result.success) {
       return res.status(200).json({
@@ -56,6 +57,79 @@ router.post('/', async (req, res) => {
     return res.status(500).json({
       success: false,
       error: `Error parsing program: ${error.message}`
+    });
+  }
+});
+
+/**
+ * Transform program code or AST to SSA form
+ * POST /api/parse/transform-ssa
+ * 
+ * Request body:
+ * {
+ *   programCode: string, // Program code to transform (or use ast)
+ *   ast: Object,         // AST to transform (alternative to programCode)
+ *   loopUnrollingDepth: number // Loop unrolling depth (optional, default 5)
+ * }
+ * 
+ * Response:
+ * {
+ *   success: boolean,    // Whether transformation was successful
+ *   ssaAst: Object,      // AST in SSA form if successful
+ *   ssaCode: string,     // String representation of SSA code
+ *   optimizedSsaCode: string, // Optimized SSA code
+ *   error: string        // Error message if transformation failed
+ * }
+ */
+router.post('/transform-ssa', async (req, res) => {
+  try {
+    console.log('SSA Transform Request Body:', JSON.stringify(req.body));
+    const { programCode, ast, loopUnrollingDepth = 5 } = req.body;
+    
+    // Ensure we have either program code or AST
+    if (!programCode && !ast) {
+      return res.status(400).json({
+        success: false,
+        error: 'Either program code or AST is required'
+      });
+    }
+    
+    let result;
+    
+    // If program code is provided, parse it and then transform
+    if (programCode) {
+      console.log('Transforming from program code, length:', programCode.length);
+      result = await ssaService.parseAndTransformToSSA(programCode, { loopUnrollingDepth });
+    } else {
+      // Otherwise, transform the provided AST
+      console.log('Transforming from AST:', typeof ast);
+      result = await ssaService.transformToSSA(ast, { loopUnrollingDepth });
+    }
+    
+    if (result.success) {
+      // Fix: Map ssaAST property to ssaAst for client compatibility
+      const response = {
+        success: true,
+        // Use result.ssaAst if it exists, otherwise use result.ssaAST
+        ssaAst: result.ssaAst || result.ssaAST, 
+        ssaCode: result.ssaCode,
+        optimizedSsaCode: result.optimizedSsaCode
+      };
+      
+      console.log('SSA Transform Success:', JSON.stringify(response).substring(0, 100) + '...');
+      return res.status(200).json(response);
+    } else {
+      console.error('SSA Transform Error:', result.error);
+      return res.status(400).json({
+        success: false,
+        error: result.error
+      });
+    }
+  } catch (error) {
+    console.error('Error transforming to SSA:', error);
+    return res.status(500).json({
+      success: false,
+      error: `Error transforming to SSA: ${error.message}`
     });
   }
 });
@@ -86,8 +160,8 @@ router.post('/validate', async (req, res) => {
       });
     }
     
-    // Validate the program code
-    const result = await parserService.validate(programCode);
+    // Validate the program code - use validateProgram instead of validate
+    const result = await parserService.validateProgram(programCode);
     
     return res.status(200).json(result);
   } catch (error) {
@@ -126,8 +200,8 @@ router.post('/visualize', async (req, res) => {
       });
     }
     
-    // Parse the program code
-    const result = await parserService.parse(programCode);
+    // Parse the program code - use parseProgram instead of parse
+    const result = await parserService.parseProgram(programCode);
     
     if (!result.success) {
       return res.status(400).json({
@@ -137,8 +211,8 @@ router.post('/visualize', async (req, res) => {
       });
     }
     
-    // Generate visualization
-    const visualization = parserService.visualize(result.ast, format);
+    // Generate visualization - use visualizeAST instead of visualize
+    const visualization = parserService.visualizeAST(result.ast, format);
     
     // Set appropriate content type
     if (format === 'html') {

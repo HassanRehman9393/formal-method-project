@@ -1,130 +1,136 @@
 /**
  * SMT Controller
- * Handles API requests related to SMT generation
+ * Handles generation of SMT constraints and interaction with SMT solvers
  */
+const parserService = require('../services/parserService');
+const ssaService = require('../services/ssaService');
 const smtGenerationService = require('../services/smtGenerationService');
 
 /**
- * Generate SMT constraints from a program with support for arrays and control flow
- * @param {Request} req - Express request object
- * @param {Response} res - Express response object
+ * Generate SMT constraints from a program
+ * Handles both verification and equivalence checking cases
+ * 
+ * @param {Object} req - Express request object
+ * @param {Object} res - Express response object
  */
-exports.generateSMT = async (req, res) => {
+const generateSMT = async (req, res) => {
   try {
-    const { program, ast, options } = req.body;
+    // Get program from request body, support both naming conventions
+    const program = req.body.program || req.body.programCode;
+    const secondProgram = req.body.secondProgram || req.body.secondProgramCode;
+    const options = req.body.options || {};
     
-    if (!program && !ast) {
+    if (!program) {
       return res.status(400).json({
         success: false,
-        error: 'Either program code or AST is required'
+        message: 'Program code is required'
       });
     }
+
+    // Parse the program to get AST
+    const ast = parserService.parseProgram(program);
     
-    // Extract options for constraint generation
-    const constraintOptions = {
-      loopUnrollDepth: options?.loopUnrollDepth || 5,
-      generateArrayConstraints: options?.generateArrayConstraints !== false,
-      includeLoopInvariants: options?.includeLoopInvariants !== false
-    };
+    // Transform to SSA if requested
+    const ssaAst = options.useSSA ? ssaService.transformToSSA(ast) : ast;
     
-    // If we have an AST directly, use it; otherwise we'd need to parse the program
-    if (!ast) {
-      return res.status(400).json({
-        success: false,
-        error: 'Parser not implemented yet - please provide AST directly'
-      });
+    let smtConstraints;
+    
+    // Handle equivalence checking case
+    if (secondProgram) {
+      // Parse the second program
+      const secondAst = parserService.parseProgram(secondProgram);
+      
+      // Transform to SSA if requested
+      const secondSsaAst = options.useSSA ? ssaService.transformToSSA(secondAst) : secondAst;
+      
+      // Generate SMT constraints for equivalence checking
+      smtConstraints = smtGenerationService.generateConstraintsForEquivalence(
+        ssaAst,
+        secondSsaAst,
+        options
+      );
+    } else {
+      // Generate SMT constraints for verification
+      smtConstraints = smtGenerationService.generateConstraints(ssaAst, options);
     }
     
-    const result = await smtGenerationService.generateConstraints(ast, constraintOptions);
-    
-    if (!result.success) {
-      return res.status(400).json({
-        success: false,
-        error: result.error
-      });
-    }
-    
-    return res.status(200).json({
+    // Return the SMT constraints
+    return res.json({
       success: true,
-      smtScript: result.smtScript,
-      declarations: result.declarations,
-      assertions: result.assertions,
-      variables: result.variables,
-      arrays: result.arrays || []
+      data: {
+        smtConstraints: smtConstraints
+      }
     });
   } catch (error) {
-    console.error('Error generating SMT:', error);
+    console.error('Error generating SMT constraints:', error);
     return res.status(500).json({
       success: false,
-      error: 'Failed to generate SMT constraints',
-      message: error.message
+      message: `Error generating SMT constraints: ${error.message}`
     });
   }
 };
 
 /**
  * Get example SMT constraints
- * @param {Request} req - Express request object
- * @param {Response} res - Express response object
+ * 
+ * @param {Object} req - Express request object
+ * @param {Object} res - Express response object
  */
-exports.getExamples = (req, res) => {
+const getExamples = (req, res) => {
   try {
     const examples = smtGenerationService.generateExamples();
     
-    return res.status(200).json({
+    return res.json({
       success: true,
-      examples
+      data: {
+        examples
+      }
     });
   } catch (error) {
-    console.error('Error generating example SMT:', error);
+    console.error('Error getting SMT examples:', error);
     return res.status(500).json({
       success: false,
-      error: 'Failed to generate example SMT constraints',
-      message: error.message
+      message: `Error getting SMT examples: ${error.message}`
     });
   }
 };
 
 /**
- * Generate SMT for array operations
- * @param {Request} req - Express request object
- * @param {Response} res - Express response object
+ * Generate SMT constraints for array operations
+ * 
+ * @param {Object} req - Express request object
+ * @param {Object} res - Express response object
  */
-exports.generateArraySMT = async (req, res) => {
+const generateArraySMT = (req, res) => {
   try {
     const { arrays, operations } = req.body;
     
     if (!arrays || !operations) {
       return res.status(400).json({
         success: false,
-        error: 'Both arrays and operations are required'
+        message: 'Arrays and operations are required'
       });
     }
     
-    // Generate declarations for arrays
-    const declarations = smtGenerationService.generateArrayDeclarations(arrays);
+    const smtScript = smtGenerationService.generateArraySMT(arrays, operations);
     
-    // Generate operations for arrays
-    const assertions = smtGenerationService.generateArrayOperations(operations);
-    
-    // Generate final script
-    const smtScript = smtGenerationService.generateSMTScript({
-      arrays,
-      arrayOperations: operations
-    });
-    
-    return res.status(200).json({
+    return res.json({
       success: true,
-      smtScript,
-      declarations,
-      assertions
+      data: {
+        smtConstraints: smtScript
+      }
     });
   } catch (error) {
-    console.error('Error generating array SMT:', error);
+    console.error('Error generating array SMT constraints:', error);
     return res.status(500).json({
       success: false,
-      error: 'Failed to generate SMT for arrays',
-      message: error.message
+      message: `Error generating array SMT constraints: ${error.message}`
     });
   }
+};
+
+module.exports = {
+  generateSMT,
+  getExamples,
+  generateArraySMT
 };

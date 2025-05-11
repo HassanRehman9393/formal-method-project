@@ -5,6 +5,41 @@
 const express = require('express');
 const router = express.Router();
 const equivalenceService = require('../services/equivalenceService');
+const smtController = require('../controllers/smtController');
+
+/**
+ * Generate SMT constraints for equivalence checking
+ * POST /api/equivalence/generate-smt
+ */
+router.post('/generate-smt', smtController.generateSMT);
+
+/**
+ * Check if two programs are semantically equivalent (root endpoint)
+ * POST /api/equivalence
+ */
+router.post('/', async (req, res) => {
+  try {
+    const { program1, program2, options } = req.body;
+    
+    if (!program1 || !program2) {
+      return res.status(400).json({
+        success: false,
+        message: 'Both program1 and program2 must be provided'
+      });
+    }
+    
+    // Perform equivalence checking
+    const result = await equivalenceService.checkEquivalence(program1, program2, options);
+    
+    res.json(result);
+  } catch (error) {
+    console.error('Error in equivalence endpoint:', error);
+    res.status(500).json({
+      success: false,
+      message: `Error checking equivalence: ${error.message}`
+    });
+  }
+});
 
 /**
  * Check if two programs are semantically equivalent

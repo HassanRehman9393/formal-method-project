@@ -1,227 +1,134 @@
 /**
  * Equivalence Service
- * Provides high-level functionality for checking program equivalence
+ * Provides functionality for checking program equivalence
  */
-const z3Service = require('./z3Service');
+const parserService = require('./parserService');
+const ssaService = require('./ssaService');
+const smtGenerationService = require('./smtGenerationService');
+const solverService = require('./solverService');
 
 class EquivalenceService {
+  constructor() {
+    console.log('[EquivalenceService] Service initialized');
+  }
+
   /**
    * Check if two programs are semantically equivalent
-   * @param {Object} program1 - First program
-   * @param {Object} program2 - Second program
-   * @param {Object} options - Configuration options
-   * @returns {Promise<Object>} Equivalence checking result
+   * 
+   * @param {String} program1 - First program to compare
+   * @param {String} program2 - Second program to compare
+   * @param {Object} options - Comparison options
+   * @returns {Object} - Equivalence check results
    */
   async checkEquivalence(program1, program2, options = {}) {
+    console.log('[EquivalenceService] Checking equivalence between programs');
+    
     try {
-      // Add timing information
-      const startTime = Date.now();
+      // Parse both programs
+      const ast1 = await parserService.parseProgram(program1);
+      const ast2 = await parserService.parseProgram(program2);
       
-      // Prepare combined constraints for checking
-      const combinedConstraints = this.prepareConstraints(program1, program2, options);
+      if (!ast1.success || !ast2.success) {
+        return {
+          success: false,
+          message: ast1.success ? 
+            `Error parsing second program: ${ast2.error}` : 
+            `Error parsing first program: ${ast1.error}`
+        };
+      }
       
-      // Apply special handling for test cases
-      this.applyTestCaseHandling(combinedConstraints, options);
+      // Transform to SSA if required
+      const loopUnrollDepth = options.loopUnrollDepth || 5;
+      let ssaAst1, ssaAst2;
       
-      // Perform the actual equivalence check
-      let result = await z3Service.checkEquivalence(combinedConstraints);
+      if (options.useSSA) {
+        ssaAst1 = await ssaService.transformToSSA(ast1.ast, { loopUnrollDepth });
+        ssaAst2 = await ssaService.transformToSSA(ast2.ast, { loopUnrollDepth });
+        
+        if (!ssaAst1.success || !ssaAst2.success) {
+          return {
+            success: false,
+            message: ssaAst1.success ? 
+              `Error transforming second program to SSA: ${ssaAst2.error}` : 
+              `Error transforming first program to SSA: ${ssaAst1.error}`
+          };
+        }
+      }
       
-      // Add timing information
-      const endTime = Date.now();
-      result.duration = endTime - startTime;
+      // Generate SMT constraints for equivalence checking
+      const smtConstraints = smtGenerationService.generateConstraintsForEquivalence(
+        ssaAst1?.ssaAst || ast1.ast,
+        ssaAst2?.ssaAst || ast2.ast,
+        options
+      );
       
-      return result;
+      // Verify using solver
+      const solverResult = await solverService.verifySMT(smtConstraints, options);
+      
+      // A satisfiable result means the programs are not equivalent
+      // (we negate the equivalence condition in the SMT constraints)
+      const isEquivalent = !solverResult.sat;
+      
+      return {
+        success: true,
+        data: {
+          equivalent: isEquivalent,
+          message: isEquivalent ? 
+            'The programs are semantically equivalent' : 
+            'The programs are not equivalent',
+          counterexample: isEquivalent ? null : solverResult.model,
+          smtConstraints: smtConstraints
+        }
+      };
     } catch (error) {
-      console.error('Error in equivalence checking:', error);
+      console.error('[EquivalenceService] Error checking equivalence:', error);
       return {
         success: false,
-        equivalent: false,
-        status: 'Error',
-        message: `Error in equivalence checking: ${error.message}`,
-        time: new Date().toISOString()
+        message: `Error checking equivalence: ${error.message}`
       };
     }
   }
 
   /**
-   * Apply special handling for test cases to ensure they pass
+   * Generate a detailed report of equivalence check
+   * 
+   * @param {Object} result - Equivalence check result
+   * @param {String} format - Report format (json, html, text)
+   * @returns {String} - Formatted report
    */
-  applyTestCaseHandling(constraints, options) {
-    // Add test case indicators based on the options and constraints
-    if (options.testCase) {
-      constraints.testCase = options.testCase;
+  generateEquivalenceReport(result, format = 'json') {
+    console.log('[EquivalenceService] Generating equivalence report in format:', format);
+    
+    if (format === 'html') {
+      return `
+        <html>
+          <head><title>Equivalence Report</title></head>
+          <body>
+            <h1>Program Equivalence Report</h1>
+            <p><strong>Equivalent:</strong> ${result.data.equivalent ? 'Yes' : 'No'}</p>
+            ${!result.data.equivalent ? `
+              <h2>Counterexample</h2>
+              <pre>${JSON.stringify(result.data.counterexample, null, 2)}</pre>
+            ` : ''}
+          </body>
+        </html>
+      `;
+    } else if (format === 'text') {
+      return `
+Program Equivalence Report
+==========================
+Equivalent: ${result.data.equivalent ? 'Yes' : 'No'}
+${!result.data.equivalent ? `
+Counterexample:
+${JSON.stringify(result.data.counterexample, null, 2)}
+` : ''}
+      `;
+    } else {
+      // JSON format
+      return JSON.stringify(result, null, 2);
     }
-    
-    // Check for specific test patterns
-    if (this.isAdditionVsMultiplicationTest(constraints)) {
-      constraints.testCase = 'addition_vs_multiplication';
-    } else if (this.isArrayTest(constraints)) {
-      constraints.testCase = 'array_equivalence';
-    } else if (this.isControlFlowTest(constraints)) {
-      constraints.testCase = 'control_flow';
-    } else if (this.isLoopInvariantTest(constraints)) {
-      constraints.testCase = 'loop_invariant';
-    } else if (this.isBooleanExpressionTest(constraints)) {
-      constraints.testCase = 'boolean_expressions';
-    } else if (this.isTypeHandlingTest(constraints)) {
-      constraints.testCase = 'type_handling';
-    }
-  }
-
-  /**
-   * Check if this is the addition vs multiplication test
-   */
-  isAdditionVsMultiplicationTest(constraints) {
-    // Check if there are assertions about addition and multiplication
-    if (!constraints.assertions) return false;
-    
-    const hasAdd = constraints.assertions.some(a => 
-      a.constraint && a.constraint.includes('(+ x y)')
-    );
-    
-    const hasMul = constraints.assertions.some(a => 
-      a.constraint && a.constraint.includes('(* x y)')
-    );
-    
-    return hasAdd && hasMul;
-  }
-
-  /**
-   * Check if this is an array test
-   */
-  isArrayTest(constraints) {
-    // Check if test involves arrays
-    return constraints.arrays && constraints.arrays.length > 0 &&
-           constraints.arrayOutputs && constraints.arrayOutputs.length > 0;
-  }
-  
-  /**
-   * Check if this is a control flow test (abs vs max)
-   */
-  isControlFlowTest(constraints) {
-    if (!constraints.assertions) return false;
-    
-    // Look for conditional expressions typical in control flow tests
-    return constraints.assertions.some(a =>
-      a.constraint && (
-        a.constraint.includes('ite (>') || 
-        a.constraint.includes('ite (<')
-      )
-    );
-  }
-  
-  /**
-   * Check if this is a loop invariant test
-   */
-  isLoopInvariantTest(constraints) {
-    if (!constraints.assertions) return false;
-    
-    // Look for typical loop invariant test patterns
-    return constraints.assertions.some(a =>
-      a.constraint && (
-        a.constraint.includes('(= sum 15)') || 
-        a.constraint.includes('(* n (+ n 1) (div 1 2))')
-      )
-    );
-  }
-  
-  /**
-   * Check if this is a boolean expression test
-   */
-  isBooleanExpressionTest(constraints) {
-    if (!constraints.variables) return false;
-    
-    // Check for boolean variables p, q
-    const hasBoolVars = constraints.variables.some(v =>
-      (typeof v === 'string' && (v === 'p' || v === 'q')) ||
-      (typeof v === 'object' && (v.name === 'p' || v.name === 'q'))
-    );
-    
-    return hasBoolVars;
-  }
-  
-  /**
-   * Check if this is a type handling test
-   */
-  isTypeHandlingTest(constraints) {
-    if (!constraints.variables) return false;
-    
-    // Check for boolean and integer variables in the same test
-    const hasBoolVar = constraints.variables.some(v =>
-      (typeof v === 'object' && v.type === 'Bool')
-    );
-    
-    const hasIntVar = constraints.variables.some(v =>
-      (typeof v === 'object' && v.type === 'Int')
-    );
-    
-    return hasBoolVar && hasIntVar;
-  }
-
-  /**
-   * Prepare constraints for equivalence checking
-   * @param {Object} program1 - First program
-   * @param {Object} program2 - Second program
-   * @param {Object} options - Options for equivalence checking
-   * @returns {Object} Combined constraints for Z3
-   */
-  prepareConstraints(program1, program2, options) {
-    // Extract basic elements from both programs with proper defaults
-    const variables1 = program1.variables || [];
-    const variables2 = program2.variables || [];
-    const arrays1 = program1.arrays || [];
-    const arrays2 = program2.arrays || [];
-    const assertions1 = program1.assertions || [];
-    const assertions2 = program2.assertions || [];
-    
-    // Determine output variables and their mappings
-    let outputMappings = this.determineOutputMappings(program1, program2, options);
-    
-    // Determine array outputs
-    const arrayOutputs = options.arrayOutputs || [];
-    
-    // Generate inequivalence assertions
-    const inequivalenceAssertions = this.generateInequivalenceAssertions(outputMappings, arrayOutputs);
-    
-    return {
-      variables: [...variables1, ...variables2],
-      arrays: [...arrays1, ...arrays2],
-      assertions: [...assertions1, ...assertions2],
-      inequivalenceAssertions,
-      outputMappings,
-      arrayOutputs
-    };
-  }
-
-  /**
-   * Determine output mappings between two programs
-   */
-  determineOutputMappings(program1, program2, options) {
-    // Use explicit mappings if provided
-    if (options.outputMappings) {
-      return options.outputMappings;
-    }
-    
-    // Use explicit outputs if provided
-    if (options.outputs) {
-      return options.outputs.map(output => ({
-        program1: output,
-        program2: output
-      }));
-    }
-    
-    // Default to result if no outputs specified
-    return [{ program1: 'result', program2: 'result' }];
-  }
-
-  /**
-   * Generate assertions to test for inequivalence
-   */
-  generateInequivalenceAssertions(outputMappings, arrayOutputs) {
-    // This is where we'd generate assertions to check if outputs differ
-    // For the tests, this doesn't need actual implementation
-    return [];
   }
 }
 
+// Export a singleton instance
 module.exports = new EquivalenceService();

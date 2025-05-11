@@ -5,11 +5,15 @@
 const express = require('express');
 const verificationController = require('../controllers/verificationController');
 const performanceMiddleware = require('../middleware/performanceMiddleware');
+const smtController = require('../controllers/smtController');
 
 const router = express.Router();
 
 // Apply global middleware
 router.use(performanceMiddleware.optimizeSolverMiddleware);
+
+// Generate SMT constraints for verification
+router.post('/generate-smt', smtController.generateSMT);
 
 // Rate-limited and cached verification endpoints
 router.post('/verify', 

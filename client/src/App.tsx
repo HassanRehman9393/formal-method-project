@@ -317,7 +317,9 @@ const AppContent: React.FC = () => {
                 <SMTDisplay
                   smtCode={smtConstraints}
                   isLoading={isProcessing && (isParsingCode || isTransformingSsa || isGeneratingSmtConstraints)}
-                  constraintsCount={smtConstraints ? (smtConstraints.match(/\(assert/g) || []).length : undefined}
+                  constraintsCount={typeof smtConstraints === 'string' ? 
+                    (smtConstraints.match(/\(assert/g) || []).length : 
+                    undefined}
                 />
               </TabsContent>
               
