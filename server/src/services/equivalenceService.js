@@ -5,7 +5,7 @@
 const parserService = require('./parserService');
 const ssaService = require('./ssaService');
 const smtGenerationService = require('./smtGenerationService');
-const solverService = require('./solverService');
+const z3Service = require('./z3Service');
 
 class EquivalenceService {
   constructor() {
@@ -41,7 +41,7 @@ class EquivalenceService {
       const loopUnrollDepth = options.loopUnrollDepth || 5;
       let ssaAst1, ssaAst2;
       
-      if (options.useSSA) {
+      if (options.useSSA !== false) {
         ssaAst1 = await ssaService.transformToSSA(ast1.ast, { loopUnrollDepth });
         ssaAst2 = await ssaService.transformToSSA(ast2.ast, { loopUnrollDepth });
         
@@ -56,28 +56,36 @@ class EquivalenceService {
       }
       
       // Generate SMT constraints for equivalence checking
-      const smtConstraints = smtGenerationService.generateConstraintsForEquivalence(
+      const constraints = await smtGenerationService.generateConstraintsForEquivalence(
         ssaAst1?.ssaAst || ast1.ast,
         ssaAst2?.ssaAst || ast2.ast,
         options
       );
       
-      // Verify using solver
-      const solverResult = await solverService.verifySMT(smtConstraints, options);
+      if (!constraints.success) {
+        return {
+          success: false,
+          message: `Error generating equivalence constraints: ${constraints.error}`
+        };
+      }
+      
+      // Verify using Z3 service
+      const result = await z3Service.checkEquivalence(constraints, options);
       
       // A satisfiable result means the programs are not equivalent
       // (we negate the equivalence condition in the SMT constraints)
-      const isEquivalent = !solverResult.sat;
+      const isEquivalent = result.equivalent;
       
       return {
         success: true,
         data: {
           equivalent: isEquivalent,
-          message: isEquivalent ? 
+          message: result.message || (isEquivalent ? 
             'The programs are semantically equivalent' : 
-            'The programs are not equivalent',
-          counterexample: isEquivalent ? null : solverResult.model,
-          smtConstraints: smtConstraints
+            'The programs are not equivalent'),
+          counterexample: isEquivalent ? null : result.counterexample,
+          time: result.executionTime || 0,
+          timedOut: result.timedOut || false
         }
       };
     } catch (error) {
@@ -106,10 +114,15 @@ class EquivalenceService {
           <body>
             <h1>Program Equivalence Report</h1>
             <p><strong>Equivalent:</strong> ${result.data.equivalent ? 'Yes' : 'No'}</p>
-            ${!result.data.equivalent ? `
+            ${!result.data.equivalent && result.data.counterexample ? `
               <h2>Counterexample</h2>
               <pre>${JSON.stringify(result.data.counterexample, null, 2)}</pre>
+              ${result.data.counterexample.trace ? `
+                <h3>Execution Trace</h3>
+                <pre>${JSON.stringify(result.data.counterexample.trace, null, 2)}</pre>
+              ` : ''}
             ` : ''}
+            <p><strong>Execution Time:</strong> ${result.data.time || 0}ms</p>
           </body>
         </html>
       `;
@@ -118,10 +131,15 @@ class EquivalenceService {
 Program Equivalence Report
 ==========================
 Equivalent: ${result.data.equivalent ? 'Yes' : 'No'}
-${!result.data.equivalent ? `
+${!result.data.equivalent && result.data.counterexample ? `
 Counterexample:
 ${JSON.stringify(result.data.counterexample, null, 2)}
+${result.data.counterexample.trace ? `
+Execution Trace:
+${JSON.stringify(result.data.counterexample.trace, null, 2)}
 ` : ''}
+` : ''}
+Execution Time: ${result.data.time || 0}ms
       `;
     } else {
       // JSON format

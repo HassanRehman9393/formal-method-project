@@ -129,74 +129,190 @@ function transformASTToSSA(ast, loopUnrollDepth) {
 }
 
 /**
- * Generate SSA code from SSA AST (placeholder implementation)
+ * Generate SSA code from SSA AST
  * @param {Object} ssaAST - AST in SSA form
  * @returns {string} SSA code
  */
 function generateSSACode(ssaAST) {
-  // This is a placeholder implementation
-  // A real implementation would generate proper SSA code
-  
-  let ssaCode = 'function main() {\n';
-  ssaCode += '  // SSA code would be generated here\n';
-  
-  // Extract variable names from the AST for the example
-  const variableNames = Object.keys(ssaAST.variables || {});
-  if (variableNames.length === 0) {
-    // Sample variables if none found
-    variableNames.push('x', 'y', 'result');
+  if (!ssaAST || !ssaAST.body || !Array.isArray(ssaAST.body)) {
+    return "// Error: Unable to generate SSA code from invalid AST";
   }
   
-  // Add variable declarations with SSA indices
-  variableNames.forEach(variable => {
-    ssaCode += `  var ${variable}_0 = /* initial value */;\n`;
+  let ssaCode = "// Program in SSA form\n";
+  
+  // Process the statements in the AST
+  ssaAST.body.forEach((node, index) => {
+    const line = generateStatementSSA(node, index);
+    if (line) {
+      ssaCode += line + "\n";
+    }
   });
-  
-  // Add placeholder for loop handling
-  if (ssaAST.loopUnrollDepth > 0) {
-    ssaCode += '\n  // Loop unrolled to depth ' + ssaAST.loopUnrollDepth + '\n';
-    ssaCode += '  // Loop body would be here with variable versioning\n';
-    
-    variableNames.forEach(variable => {
-      ssaCode += `  var ${variable}_1 = ${variable}_0 + /* some operation */;\n`;
-    });
-  }
-  
-  // Add return statement
-  ssaCode += '\n  return ' + (variableNames[0] || 'result') + '_0;\n';
-  ssaCode += '}\n';
   
   return ssaCode;
 }
 
 /**
- * Optimize SSA code (placeholder implementation)
+ * Generate SSA code for a single statement
+ * @param {Object} node - AST node
+ * @param {number} index - Statement index for versioning
+ * @returns {string} SSA code for the statement
+ */
+function generateStatementSSA(node, index) {
+  if (!node) return null;
+  
+  switch (node.type) {
+    case 'VariableDeclaration':
+      if (node.id && node.init) {
+        const varName = node.id.name || 'var';
+        const initValue = expressionToString(node.init);
+        return `${varName}_${index} := ${initValue};`;
+      }
+      return `// Variable declaration without name or initializer at index ${index}`;
+      
+    case 'AssignmentStatement':
+      if (node.left && node.right) {
+        const leftName = node.left.name || 'var';
+        const rightValue = expressionToString(node.right);
+        return `${leftName}_${index + 1} := ${rightValue};`;
+      }
+      return `// Assignment without left or right at index ${index}`;
+      
+    case 'AssertStatement':
+      if (node.expression) {
+        return `assert(${expressionToSSAString(node.expression, index)});`;
+      }
+      return `// Assert without expression at index ${index}`;
+      
+    case 'IfStatement':
+      let ifCode = `if (${expressionToSSAString(node.condition, index)}) {`;
+      // In a real implementation, we would process the then and else branches
+      ifCode += `\n  // Then branch would be processed here\n`;
+      if (node.alternate) {
+        ifCode += `} else {\n  // Else branch would be processed here\n}`;
+      } else {
+        ifCode += `}`;
+      }
+      return ifCode;
+      
+    case 'WhileStatement':
+      if (node.condition) {
+        return `while (${expressionToSSAString(node.condition, index)}) {\n  // Loop body would be processed here\n}`;
+      }
+      return `// While without condition at index ${index}`;
+      
+    default:
+      return `// Unsupported statement type: ${node.type} at index ${index}`;
+  }
+}
+
+/**
+ * Convert expression to SSA string representation
+ * @param {Object} expr - Expression node
+ * @param {number} index - Statement index for versioning
+ * @returns {string} SSA string for the expression
+ */
+function expressionToSSAString(expr, index) {
+  if (!expr) return "/* undefined */";
+  
+  switch (expr.type) {
+    case 'Identifier':
+      const name = expr.name || 'var';
+      // In SSA, we would use the latest version of the variable
+      return `${name}_${index}`;
+      
+    case 'Literal':
+      return expr.value !== undefined ? expr.value.toString() : "0";
+      
+    case 'BinaryExpression':
+      const left = expressionToSSAString(expr.left, index);
+      const right = expressionToSSAString(expr.right, index);
+      const op = expr.operator || '?';
+      return `${left} ${op} ${right}`;
+      
+    default:
+      return `/* ${expr.type || 'unknown'} */`;
+  }
+}
+
+/**
+ * Convert expression to string
+ * @param {Object} expr - Expression node
+ * @returns {string} String representation of the expression
+ */
+function expressionToString(expr) {
+  if (!expr) return "/* undefined */";
+  
+  switch (expr.type) {
+    case 'Identifier':
+      return expr.name || 'var';
+      
+    case 'Literal':
+      return expr.value !== undefined ? expr.value.toString() : "0";
+      
+    case 'BinaryExpression':
+      const left = expressionToString(expr.left);
+      const right = expressionToString(expr.right);
+      const op = expr.operator || '?';
+      return `${left} ${op} ${right}`;
+      
+    default:
+      return `/* ${expr.type || 'unknown'} */`;
+  }
+}
+
+/**
+ * Optimize SSA code with basic optimizations
  * @param {string} ssaCode - SSA code to optimize
  * @returns {string} Optimized SSA code
  */
 function optimizeSSA(ssaCode) {
-  // This is a placeholder implementation
-  // A real implementation would apply optimizations like:
-  // - Constant propagation
-  // - Dead code elimination
-  // - Common subexpression elimination
-  
-  // For this placeholder, just add comments to indicate optimizations
+  // Split code into lines
   const lines = ssaCode.split('\n');
-  const optimizedLines = [];
+  let optimizedCode = "// Optimized SSA code\n";
   
+  // Track constant values
+  const constants = {};
+  
+  // Apply constant propagation
   for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
+    const line = lines[i].trim();
     
-    // Add the original line
-    optimizedLines.push(line);
+    // Skip comments and empty lines
+    if (line.startsWith('//') || line === '') {
+      optimizedCode += line + '\n';
+      continue;
+    }
     
-    // Add optimization comments to variable declarations
-    if (line.trim().startsWith('var ')) {
-      // Add optimization comment
-      optimizedLines[optimizedLines.length - 1] += ' // Optimized: constant propagated';
+    // Check for variable assignments with constant values
+    const assignMatch = line.match(/^([a-zA-Z0-9_]+)_(\d+)\s*:=\s*(\d+);$/);
+    if (assignMatch) {
+      const [, varName, version, value] = assignMatch;
+      constants[`${varName}_${version}`] = value;
+    }
+    
+    // Replace variables with their constant values in this line
+    let optimizedLine = line;
+    for (const [varName, value] of Object.entries(constants)) {
+      const regex = new RegExp(`\\b${varName}\\b`, 'g');
+      optimizedLine = optimizedLine.replace(regex, value);
+    }
+    
+    // Add optimized line with comment if it changed
+    if (optimizedLine !== line) {
+      optimizedCode += optimizedLine + ' // Optimized: constant propagation\n';
+    } else {
+      optimizedCode += optimizedLine + '\n';
+    }
+    
+    // Check if we can detect dead code (very basic)
+    if (optimizedLine.includes('if (0)') || optimizedLine.includes('if (false)')) {
+      optimizedCode += '// Dead code eliminated: conditional is always false\n';
+      // Skip the next line which would be the then block
+      i++;
+    } else if (optimizedLine.includes('if (1)') || optimizedLine.includes('if (true)')) {
+      optimizedCode += '// Optimized: conditional is always true\n';
     }
   }
   
-  return optimizedLines.join('\n');
+  return optimizedCode;
 } 

@@ -7,9 +7,8 @@ import { CFGNode, CFGEdge } from '../../types/visualization';
  * @returns Object containing nodes and edges for the CFG
  */
 export function generateCFG(ast: any, isSSA: boolean = false): { nodes: CFGNode[], edges: CFGEdge[] } {
-  // Now using the ast parameter properly
+  // Return a minimal empty graph when no AST is provided
   if (!ast) {
-    // Return a minimal empty graph when no AST is provided
     return {
       nodes: [
         {
@@ -23,102 +22,177 @@ export function generateCFG(ast: any, isSSA: boolean = false): { nodes: CFGNode[
     };
   }
   
-  // Process the AST to create nodes
-  const nodes: CFGNode[] = processAstNodes(ast, isSSA);
+  // State for tracking nodes and edges
+  const nodes: CFGNode[] = [];
+  const edges: CFGEdge[] = [];
   
-  // Generate edges based on the AST structure
-  const edges: CFGEdge[] = generateEdgesFromAst(ast);
-  
-  return { nodes, edges };
-}
-
-/**
- * Process the AST and generate CFG nodes
- */
-function processAstNodes(ast: any, isSSA: boolean): CFGNode[] {
-  // Start with an entry node
-  const nodes: CFGNode[] = [
-    {
-      id: 'entry',
-      label: 'START',
-      type: 'entry',
-      code: 'Program entry point'
-    }
-  ];
-  
-  // Example node processing logic - this would be expanded based on the actual AST structure
-  if (ast && ast.body && Array.isArray(ast.body)) {
-    ast.body.forEach((statement: any, index: number) => {
-      const nodeId = `n${index + 1}`;
-      nodes.push({
-        id: nodeId,
-        label: getStatementLabel(statement),
-        type: getStatementType(statement),
-        code: getStatementCode(statement, isSSA)
-      });
-    });
-  }
+  // Add entry node
+  const entryNode: CFGNode = {
+    id: 'entry',
+    label: 'START',
+    type: 'entry',
+    code: 'Program entry point'
+  };
+  nodes.push(entryNode);
   
   // Add exit node
-  nodes.push({
+  const exitNode: CFGNode = {
     id: 'exit',
     label: 'END',
     type: 'exit',
     code: 'Program exit point'
-  });
+  };
   
-  return nodes;
-}
-
-/**
- * Generate edges based on the AST structure
- */
-function generateEdgesFromAst(ast: any): CFGEdge[] {
-  const edges: CFGEdge[] = [];
-  
-  // Example edge creation logic
-  if (ast && ast.body && Array.isArray(ast.body)) {
-    // Connect entry to first statement
-    edges.push({
-      source: 'entry',
-      target: 'n1',
-      label: '',
-      isHighlighted: false
-    });
+  // Process the AST to create nodes and edges
+  if (ast.type === 'Program' && ast.body && Array.isArray(ast.body)) {
+    let lastNodeId = 'entry';
     
-    // Connect statements sequentially
-    ast.body.forEach((_: any, index: number) => {
-      // Removed the unused statement parameter and replaced with _
-      if (index < ast.body.length - 1) {
+    // Process each statement in the program body
+    ast.body.forEach((statement: any, index: number) => {
+      const nodeId = `stmt_${index}`;
+      const label = getStatementLabel(statement);
+      const type = getStatementType(statement);
+      const code = getStatementCode(statement, isSSA);
+      
+      // Create node for this statement
+      const node: CFGNode = {
+        id: nodeId,
+        label,
+        type,
+        code
+      };
+      nodes.push(node);
+      
+      // Create edge from previous statement to this one
+      edges.push({
+        source: lastNodeId,
+        target: nodeId,
+        label: '',
+        isHighlighted: false
+      });
+      
+      // Handle if statements with branches
+      if (statement.type === 'IfStatement') {
+        // Create nodes for then and else branches
+        const thenNodeId = `then_${index}`;
+        const elseNodeId = `else_${index}`;
+        const joinNodeId = `join_${index}`;
+        
+        // Create then branch node
+        nodes.push({
+          id: thenNodeId,
+          label: 'Then Branch',
+          type: 'statement',
+          code: getStatementCode(statement.consequent, isSSA)
+        });
+        
+        // Create else branch node if it exists
+        if (statement.alternate) {
+          nodes.push({
+            id: elseNodeId,
+            label: 'Else Branch',
+            type: 'statement',
+            code: getStatementCode(statement.alternate, isSSA)
+          });
+        }
+        
+        // Create join node
+        nodes.push({
+          id: joinNodeId,
+          label: 'Join',
+          type: 'join',
+          code: 'Control flow joins here'
+        });
+        
+        // Create edges for branches
         edges.push({
-          source: `n${index + 1}`,
-          target: `n${index + 2}`,
+          source: nodeId,
+          target: thenNodeId,
+          label: 'true',
+          isHighlighted: false
+        });
+        
+        if (statement.alternate) {
+          edges.push({
+            source: nodeId,
+            target: elseNodeId,
+            label: 'false',
+            isHighlighted: false
+          });
+          
+          edges.push({
+            source: elseNodeId,
+            target: joinNodeId,
+            label: '',
+            isHighlighted: false
+          });
+        } else {
+          edges.push({
+            source: nodeId,
+            target: joinNodeId,
+            label: 'false',
+            isHighlighted: false
+          });
+        }
+        
+        edges.push({
+          source: thenNodeId,
+          target: joinNodeId,
           label: '',
+          isHighlighted: false
+        });
+        
+        // Update last node ID to the join node
+        lastNodeId = joinNodeId;
+      } else {
+        // For simple statements, just update the last node ID
+        lastNodeId = nodeId;
+      }
+      
+      // Special handling for assert statements
+      if (statement.type === 'AssertStatement') {
+        // Create a branch for assert failure
+        const failNodeId = `fail_${index}`;
+        
+        // Create fail node
+        nodes.push({
+          id: failNodeId,
+          label: 'Assertion Failed',
+          type: 'exit',
+          code: 'Program terminated due to failed assertion'
+        });
+        
+        // Create edge to the fail node
+        edges.push({
+          source: nodeId,
+          target: failNodeId,
+          label: 'false',
           isHighlighted: false
         });
       }
     });
     
     // Connect last statement to exit
-    if (ast.body.length > 0) {
-      edges.push({
-        source: `n${ast.body.length}`,
-        target: 'exit',
-        label: '',
-        isHighlighted: false
-      });
-    } else {
-      // If no statements, connect entry directly to exit
-      edges.push({
-        source: 'entry',
-        target: 'exit',
-        label: '',
-        isHighlighted: false
-      });
-    }
+    edges.push({
+      source: lastNodeId,
+      target: 'exit',
+      label: '',
+      isHighlighted: false
+    });
+  } else {
+    // If the AST doesn't have the expected structure, connect entry directly to exit
+    edges.push({
+      source: 'entry',
+      target: 'exit',
+      label: '',
+      isHighlighted: false
+    });
   }
   
-  return edges;
+  // Add exit node at the end
+  nodes.push(exitNode);
+  
+  return { nodes, edges };
 }
 
 /**
@@ -127,13 +201,28 @@ function generateEdgesFromAst(ast: any): CFGEdge[] {
 function getStatementLabel(statement: any): string {
   if (!statement) return 'Unknown';
   
-  if (statement.type === 'IfStatement') return 'if';
-  if (statement.type === 'WhileStatement') return 'while';
-  if (statement.type === 'ForStatement') return 'for';
-  if (statement.type === 'AssignmentStatement') return 'assign';
-  if (statement.type === 'AssertStatement') return 'assert';
-  
-  return statement.type || 'Statement';
+  switch (statement.type) {
+    case 'VariableDeclaration':
+      return statement.id?.name 
+        ? `${statement.id.name} := ...` 
+        : 'var := ...';
+    case 'AssignmentStatement':
+      return statement.left?.name 
+        ? `${statement.left.name} := ...` 
+        : 'assign';
+    case 'IfStatement':
+      return 'if (...)';
+    case 'WhileStatement':
+      return 'while (...)';
+    case 'ForStatement':
+      return 'for (...)';
+    case 'AssertStatement':
+      return 'assert(...)';
+    case 'BinaryExpression':
+      return `${statement.operator || '?'}`;
+    default:
+      return statement.type || 'Statement';
+  }
 }
 
 /**
@@ -142,12 +231,16 @@ function getStatementLabel(statement: any): string {
 function getStatementType(statement: any): "entry" | "exit" | "statement" | "condition" | "join" | "assert" {
   if (!statement) return "statement";
   
-  if (statement.type === 'IfStatement') return "condition";
-  if (statement.type === 'WhileStatement') return "condition";
-  if (statement.type === 'ForStatement') return "condition";
-  if (statement.type === 'AssertStatement') return "assert";
-  
-  return "statement";  // Return "statement" as the default type
+  switch (statement.type) {
+    case 'IfStatement':
+    case 'WhileStatement':
+    case 'ForStatement':
+      return "condition";
+    case 'AssertStatement':
+      return "assert";
+    default:
+      return "statement";
+  }
 }
 
 /**
@@ -161,8 +254,59 @@ function getStatementCode(statement: any, isSSA: boolean): string {
     return statement.ssaForm;
   }
   
-  // This would be replaced with actual code generation based on the statement
-  return statement.type ? `${statement.type} statement` : 'Statement';
+  switch (statement.type) {
+    case 'VariableDeclaration':
+      if (statement.id && statement.init) {
+        const varName = statement.id.name || '?';
+        const initValue = expressionToString(statement.init);
+        return `${varName} := ${initValue}`;
+      }
+      return 'var := value';
+      
+    case 'AssignmentStatement':
+      if (statement.left && statement.right) {
+        const leftStr = statement.left.name || '?';
+        const rightStr = expressionToString(statement.right);
+        return `${leftStr} := ${rightStr}`;
+      }
+      return 'x := y';
+      
+    case 'AssertStatement':
+      if (statement.expression) {
+        return `assert(${expressionToString(statement.expression)})`;
+      }
+      return 'assert(...)';
+      
+    case 'IfStatement':
+      return `if (${expressionToString(statement.condition)})`;
+      
+    case 'WhileStatement':
+      return `while (${expressionToString(statement.condition)})`;
+      
+    default:
+      return statement.type ? `${statement.type}` : 'Statement';
+  }
+}
+
+/**
+ * Convert an expression to a string
+ */
+function expressionToString(expr: any): string {
+  if (!expr) return '?';
+  
+  switch (expr.type) {
+    case 'Identifier':
+      return expr.name || '?';
+      
+    case 'Literal':
+      return expr.value?.toString() || '?';
+      
+    case 'BinaryExpression':
+      return `${expressionToString(expr.left)} ${expr.operator || '?'} ${expressionToString(expr.right)}`;
+      
+    default:
+      return expr.type ? `${expr.type}` : '?';
+  }
 }
 
 /**

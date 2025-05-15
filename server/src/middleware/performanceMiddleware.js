@@ -268,17 +268,28 @@ function rateLimitMiddleware(endpointType) {
  * @param {Function} next - Next middleware
  */
 function optimizeSolverMiddleware(req, res, next) {
-  // Auto-cleanup of solver instances based on system load
-  const stats = z3Service.getSolverInstanceStats();
-  
-  // If we have a lot of instances, reduce the max instances and max age
-  if (stats.totalInstances > 40) {
-    z3Service.setMaxSolverInstances(30);
-    z3Service.setSolverInstanceMaxAge(15 * 60 * 1000); // 15 minutes
-  } else if (stats.totalInstances < 10) {
-    // If we have few instances, increase the limits
-    z3Service.setMaxSolverInstances(50);
-    z3Service.setSolverInstanceMaxAge(30 * 60 * 1000); // 30 minutes
+  try {
+    // Check if getSolverInstanceStats exists before calling it
+    if (typeof z3Service.getSolverInstanceStats === 'function') {
+      // Auto-cleanup of solver instances based on system load
+      const stats = z3Service.getSolverInstanceStats();
+      
+      // If we have a lot of instances, reduce the max instances and max age
+      if (stats.totalInstances > 40) {
+        z3Service.setMaxSolverInstances(30);
+        z3Service.setSolverInstanceMaxAge(15 * 60 * 1000); // 15 minutes
+      } else if (stats.totalInstances < 10) {
+        // If we have few instances, increase the limits
+        z3Service.setMaxSolverInstances(50);
+        z3Service.setSolverInstanceMaxAge(30 * 60 * 1000); // 30 minutes
+      }
+    } else {
+      // Log a warning but continue execution
+      console.warn('z3Service.getSolverInstanceStats is not available - skipping solver optimization');
+    }
+  } catch (error) {
+    // Log error but don't interrupt request processing
+    console.error('Error in optimizeSolverMiddleware:', error.message);
   }
   
   next();

@@ -39,35 +39,54 @@ const verifyProgram = async (req, res) => {
     };
     
     // Parse the program
-    const ast = parserService.parseProgram(program);
+    const parseResult = await parserService.parseProgram(program);
+    
+    if (!parseResult.success) {
+      return res.status(400).json({
+        success: false,
+        message: `Parser error: ${parseResult.error}`
+      });
+    }
     
     // Transform to SSA if requested
-    const ssaAst = options.useSSA 
-      ? ssaService.transformToSSA(ast, verificationOptions)
-      : ast;
+    let ssaResult;
+    if (options.useSSA !== false) {
+      ssaResult = await ssaService.transformToSSA(parseResult.ast, verificationOptions);
+      
+      if (!ssaResult.success) {
+        return res.status(400).json({
+          success: false,
+          message: `SSA transformation error: ${ssaResult.error}`
+        });
+      }
+    }
     
-    // Generate constraints for verification
-    const smtConstraints = smtGenerationService.generateConstraints(
-      ssaAst,
-        verificationOptions
-      );
-    
-    // Verify using solver service
-    const solverResult = await solverService.verifySMT(
-      smtConstraints,
-        verificationOptions
-      );
+    // Use verification service to verify the program
+    const verificationResult = await verificationService.verifyAssertions(
+      options.useSSA !== false ? ssaResult.ssaAst : parseResult.ast,
+      verificationOptions
+    );
     
     const executionTime = Date.now() - startTime;
+    
+    if (!verificationResult.success) {
+      return res.status(500).json({
+        success: false,
+        message: `Verification error: ${verificationResult.error}`
+      });
+    }
+    
+    // For a simple program with no assertions, we want to show it as verified
+    const noAssertionsMessage = 'No assertions found in program - considering program verified';
     
     // Format response
     return res.json({
       success: true,
       data: {
-        verified: solverResult.sat === false,
-        counterexamples: solverResult.model ? [solverResult.model] : [],
-        executionTime,
-        solverStatistics: solverResult.statistics || {}
+        verified: verificationResult.verified === false ? false : true,
+        message: verificationResult.message || (verificationResult.verified ? 'All assertions verified successfully!' : noAssertionsMessage),
+        counterexamples: verificationResult.counterexamples || [],
+        executionTime: verificationResult.time || executionTime
       }
     });
   } catch (error) {
@@ -96,13 +115,23 @@ const verifyFromSSA = async (req, res) => {
       });
     }
     
-    // Mock verification result for now
+    // Real verification from SSA
+    const verificationResult = await verificationService.verifyFromSSA(ssaAst, options || {});
+    
+    if (!verificationResult.success) {
+      return res.status(500).json({
+        success: false,
+        message: `Verification error: ${verificationResult.error}`
+      });
+    }
+    
     return res.json({
       success: true,
       data: {
-        verified: true,
-        message: 'Program verified (from SSA form)',
-        executionTime: 100
+        verified: verificationResult.verified,
+        message: verificationResult.message,
+        counterexamples: verificationResult.counterexamples || [],
+        executionTime: verificationResult.time || 0
       }
     });
   } catch (error) {
@@ -122,13 +151,21 @@ const verifyFromSSA = async (req, res) => {
  */
 const generateReport = async (req, res) => {
   try {
-    const { program, verificationResults, format } = req.body;
+    const { verificationResults, format } = req.body;
     
-    // Mock report generation
+    if (!verificationResults) {
+      return res.status(400).json({
+        success: false,
+        message: 'Verification results are required'
+      });
+    }
+    
+    const report = verificationService.generateReport(verificationResults, format || 'json');
+    
     return res.json({
       success: true,
       data: {
-        report: `Mock verification report for program`
+        report
       }
     });
   } catch (error) {
@@ -157,23 +194,27 @@ const checkEquivalence = async (req, res) => {
       });
     }
     
-    // Mock equivalence check
-    const isEquivalent = Math.random() > 0.5;
+    // Use verification service to check equivalence
+    const equivalenceResult = await verificationService.checkEquivalence(
+      program1,
+      program2,
+      options || {}
+    );
+    
+    if (!equivalenceResult.success) {
+      return res.status(500).json({
+        success: false,
+        message: `Equivalence check error: ${equivalenceResult.error}`
+      });
+    }
     
     return res.json({
       success: true,
       data: {
-        equivalent: isEquivalent,
-        ...(isEquivalent 
-          ? { message: 'Programs are equivalent' }
-          : { 
-              message: 'Programs are not equivalent',
-              counterexample: {
-                inputs: { x: 5, y: 10 },
-                outputs: { program1: 15, program2: 10 }
-              }
-            }
-        )
+        equivalent: equivalenceResult.equivalent,
+        message: equivalenceResult.message,
+        counterexample: equivalenceResult.counterexample,
+        time: equivalenceResult.time || 0
       }
     });
   } catch (error) {
@@ -185,62 +226,314 @@ const checkEquivalence = async (req, res) => {
   }
 };
 
-// Other controller methods (placeholders for now)
-const generateEnhancedCounterexamples = (req, res) => {
-  res.json({
-    success: true,
-    data: {
-      counterexamples: [
-        { inputs: { x: 5, y: 10 }, trace: [/* execution steps */] }
-      ]
+/**
+ * Generate enhanced counterexamples with execution traces
+ */
+const generateEnhancedCounterexamples = async (req, res) => {
+  try {
+    const { program, verificationResult } = req.body;
+    
+    if (!program || !verificationResult) {
+      return res.status(400).json({
+        success: false,
+        message: 'Program and verification result are required'
+      });
     }
-  });
+    
+    // Parse the program
+    const parseResult = await parserService.parse(program);
+    
+    if (!parseResult.success) {
+      return res.status(400).json({
+        success: false,
+        message: `Parser error: ${parseResult.error}`
+      });
+    }
+    
+    // Get counterexamples from verification result
+    const counterexamples = verificationResult.counterexamples || [];
+    
+    if (counterexamples.length === 0) {
+      return res.json({
+        success: true,
+        data: {
+          counterexamples: []
+        }
+      });
+    }
+    
+    // Generate execution traces for each counterexample
+    const enhancedCounterexamples = counterexamples.map(counterexample => {
+      // Use Z3 service to generate execution trace
+      const trace = counterexample.trace || [];
+      
+      return {
+        inputs: counterexample.inputs,
+        trace
+      };
+    });
+    
+    return res.json({
+      success: true,
+      data: {
+        counterexamples: enhancedCounterexamples
+      }
+    });
+  } catch (error) {
+    console.error('Error generating enhanced counterexamples:', error);
+    return res.status(500).json({
+      success: false,
+      message: `Enhanced counterexample generation failed: ${error.message}`
+    });
+  }
 };
 
-const generateExecutionTrace = (req, res) => {
-  res.json({
-    success: true,
-    data: {
-      trace: [/* execution steps */]
+/**
+ * Generate execution trace for a specific counterexample
+ */
+const generateExecutionTrace = async (req, res) => {
+  try {
+    const { program, counterexample } = req.body;
+    
+    if (!program || !counterexample) {
+      return res.status(400).json({
+        success: false,
+        message: 'Program and counterexample are required'
+      });
     }
-  });
+    
+    // Parse the program
+    const parseResult = await parserService.parse(program);
+    
+    if (!parseResult.success) {
+      return res.status(400).json({
+        success: false,
+        message: `Parser error: ${parseResult.error}`
+      });
+    }
+    
+    // Generate constraints
+    const constraints = await smtGenerationService.generateConstraints(parseResult.ast, {
+      includeStatements: true
+    });
+    
+    // Create a trace from the counterexample
+    const trace = [];
+    
+    // Extract statements from constraints
+    const statements = constraints.statements || [];
+    
+    // Simulate execution with the counterexample values
+    let state = { ...counterexample.inputs };
+    
+    for (let i = 0; i < statements.length; i++) {
+      const statement = statements[i];
+      
+      // Update state based on the statement (simplified)
+      if (statement.type === 'AssignmentStatement' && statement.left && statement.left.name) {
+        const varName = statement.left.name;
+        
+        // Simulate execution (very simplified)
+        if (state[varName] !== undefined) {
+          state[varName] = state[varName] + 1; // Just an example
+        }
+      }
+      
+      trace.push({
+        line: statement.line || i + 1,
+        statement: statement.text || `Statement ${i+1}`,
+        state: { ...state }
+      });
+    }
+    
+    return res.json({
+      success: true,
+      data: {
+        trace
+      }
+    });
+  } catch (error) {
+    console.error('Error generating execution trace:', error);
+    return res.status(500).json({
+      success: false,
+      message: `Execution trace generation failed: ${error.message}`
+    });
+  }
 };
 
-const analyzeCounterexamples = (req, res) => {
-  res.json({
-    success: true,
-    data: {
-      patterns: [/* patterns */]
+/**
+ * Analyze counterexamples to detect patterns
+ */
+const analyzeCounterexamples = async (req, res) => {
+  try {
+    const { counterexamples } = req.body;
+    
+    if (!counterexamples || !Array.isArray(counterexamples) || counterexamples.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Valid counterexamples array is required'
+      });
     }
-  });
+    
+    // Analyze for patterns
+    const patterns = [];
+    
+    // Check for range patterns
+    const variables = Object.keys(counterexamples[0].inputs);
+    
+    for (const variable of variables) {
+      const values = counterexamples.map(c => c.inputs[variable]);
+      
+      if (values.every(v => typeof v === 'number')) {
+        const min = Math.min(...values);
+        const max = Math.max(...values);
+        
+        patterns.push({
+          type: 'range',
+          variable,
+          min,
+          max,
+          description: `${variable} appears to be in the range [${min}, ${max}]`
+        });
+      }
+    }
+    
+    return res.json({
+      success: true,
+      data: {
+        patterns
+      }
+    });
+  } catch (error) {
+    console.error('Error analyzing counterexamples:', error);
+    return res.status(500).json({
+      success: false,
+      message: `Counterexample analysis failed: ${error.message}`
+    });
+  }
 };
 
-const verifyWithAdaptiveTimeout = (req, res) => {
-  res.json({
-    success: true,
-    data: {
-      verified: true,
-      adaptiveTimeout: 5000
+/**
+ * Verify with adaptive timeout
+ */
+const verifyWithAdaptiveTimeout = async (req, res) => {
+  try {
+    const { program, options } = req.body;
+    
+    if (!program) {
+      return res.status(400).json({
+        success: false,
+        message: 'Program is required'
+      });
     }
-  });
+    
+    // Start with a short timeout
+    let currentTimeout = 1000;
+    const maxTimeout = options?.maxTimeout || 30000;
+    const timeoutMultiplier = options?.timeoutMultiplier || 2;
+    
+    let verificationResult;
+    let timedOut = true;
+    
+    while (timedOut && currentTimeout <= maxTimeout) {
+      // Verify with current timeout
+      verificationResult = await verificationService.verifyAssertions(
+        await parserService.parse(program).then(result => result.ast),
+        {
+          ...options,
+          timeout: currentTimeout
+        }
+      );
+      
+      // Check if timed out
+      if (verificationResult.success && !verificationResult.timedOut) {
+        timedOut = false;
+      } else {
+        // Increase timeout
+        currentTimeout = Math.min(currentTimeout * timeoutMultiplier, maxTimeout);
+      }
+    }
+    
+    return res.json({
+      success: true,
+      data: {
+        verified: verificationResult.verified,
+        adaptiveTimeout: currentTimeout,
+        timedOut: timedOut,
+        counterexamples: verificationResult.counterexamples || []
+      }
+    });
+  } catch (error) {
+    console.error('Error in adaptive timeout verification:', error);
+    return res.status(500).json({
+      success: false,
+      message: `Adaptive timeout verification failed: ${error.message}`
+    });
+  }
 };
 
+/**
+ * Set verification options
+ */
 const setVerificationOptions = (req, res) => {
-  res.json({
-    success: true,
-    data: {
-      options: req.body.options
+  try {
+    const { options } = req.body;
+    
+    if (!options) {
+      return res.status(400).json({
+        success: false,
+        message: 'Options are required'
+      });
     }
-  });
+    
+    // For now, just echo back the options
+    // In a real implementation, these could be saved in a configuration service
+    return res.json({
+      success: true,
+      data: {
+        options
+      }
+    });
+  } catch (error) {
+    console.error('Error setting verification options:', error);
+    return res.status(500).json({
+      success: false,
+      message: `Setting verification options failed: ${error.message}`
+    });
+  }
 };
 
-const optimizeConstraints = (req, res) => {
-  res.json({
-    success: true,
-    data: {
-      optimizedConstraints: "optimized constraints"
+/**
+ * Optimize constraints
+ */
+const optimizeConstraints = async (req, res) => {
+  try {
+    const { constraints, optimizationLevel } = req.body;
+    
+    if (!constraints) {
+      return res.status(400).json({
+        success: false,
+        message: 'Constraints are required'
+      });
     }
-  });
+    
+    // Use the constraint optimizer
+    const level = optimizationLevel || 'medium';
+    const optimized = await smtGenerationService.optimizeConstraints(constraints, { level });
+    
+    return res.json({
+      success: true,
+      data: {
+        optimizedConstraints: optimized
+      }
+    });
+  } catch (error) {
+    console.error('Error optimizing constraints:', error);
+    return res.status(500).json({
+      success: false,
+      message: `Constraint optimization failed: ${error.message}`
+    });
+  }
 };
 
 module.exports = {

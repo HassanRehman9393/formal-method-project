@@ -1,0 +1,5 @@
+// Program 1: Sum using intermediate variable
+x := 5;
+y := 10;
+temp := x + y;
+result := temp; 

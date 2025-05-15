@@ -17,7 +17,8 @@ export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localho
 // Function to determine if we should use mock data
 // During development we can use mock data if the API is not yet available
 const shouldUseMock = (): boolean => {
-  return import.meta.env.VITE_USE_MOCK_API === 'true' || !API_BASE_URL;
+  // Always use real API implementation
+  return false;
 };
 
 /**

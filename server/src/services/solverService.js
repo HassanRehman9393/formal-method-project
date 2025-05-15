@@ -2,6 +2,8 @@
  * Solver Service
  * Handles interaction with SMT solvers to verify programs
  */
+const z3Service = require('./z3Service');
+
 class SolverService {
   constructor() {
     console.log('[SolverService] Service initialized');
@@ -10,57 +12,73 @@ class SolverService {
   /**
    * Verify SMT constraints using an SMT solver
    * 
-   * @param {String} smtConstraints - SMT constraints to verify
+   * @param {Object} smtConstraints - SMT constraints to verify
    * @param {Object} options - Verification options
    * @returns {Object} - Verification results
    */
   async verifySMT(smtConstraints, options = {}) {
     console.log('[SolverService] Verifying SMT constraints');
     
-    // This is a placeholder implementation for testing
-    // In a real implementation, this would call an actual SMT solver
-    
-    // Simulate a delay
-    await new Promise(resolve => setTimeout(resolve, 1000));
-    
-    // Randomly decide if the constraints are satisfiable
-    const isSatisfiable = Math.random() > 0.5;
-    
-    if (isSatisfiable) {
-      // If satisfiable, return a model (counterexample)
+    try {
+      const result = await z3Service.verifyAssertions(smtConstraints, options);
+      
       return {
-        sat: true,
-        model: {
-          x: Math.floor(Math.random() * 10),
-          y: Math.floor(Math.random() * 10)
+        sat: !result.verified, // If verified=true, then sat=false (meaning unsat)
+        model: result.counterexample ? result.counterexample.inputs : null,
+        trace: result.counterexample ? result.counterexample.trace : null,
+        timedOut: result.timedOut || false,
+        statistics: {
+          time: result.executionTime || 0,
+          memory: result.memoryUsage || 0
         },
-        statistics: {
-          time: Math.random() * 1000,
-          memory: Math.random() * 100
-        }
+        message: result.message || ''
       };
-    } else {
-      // If unsatisfiable, the program is verified
-      return {
-        sat: false,
-        model: null,
-        statistics: {
-          time: Math.random() * 1000,
-          memory: Math.random() * 100
-        }
-      };
+    } catch (error) {
+      console.error('[SolverService] Error in Z3 verification:', error);
+      throw error;
     }
   }
 
   /**
    * Check satisfiability of SMT constraints
    * 
-   * @param {String} smtConstraints - SMT constraints to check
+   * @param {Object} smtConstraints - SMT constraints to check
    * @param {Object} options - Solver options
    * @returns {Object} - Results including satisfiability and model
    */
   async checkSat(smtConstraints, options = {}) {
     return this.verifySMT(smtConstraints, options);
+  }
+  
+  /**
+   * Check if two programs are equivalent
+   * 
+   * @param {Object} equivalenceConstraints - Constraints for equivalence checking
+   * @param {Object} options - Verification options
+   * @returns {Object} - Equivalence results
+   */
+  async checkEquivalence(equivalenceConstraints, options = {}) {
+    console.log('[SolverService] Checking program equivalence');
+    
+    try {
+      const result = await z3Service.checkEquivalence(equivalenceConstraints, options);
+      
+      return {
+        equivalent: result.equivalent,
+        sat: !result.equivalent, // If equivalent=true, then sat=false
+        model: result.counterexample ? result.counterexample.inputs : null,
+        trace: result.counterexample ? result.counterexample.trace : null,
+        timedOut: result.timedOut || false,
+        statistics: {
+          time: result.executionTime || 0,
+          memory: result.memoryUsage || 0
+        },
+        message: result.message || ''
+      };
+    } catch (error) {
+      console.error('[SolverService] Error in equivalence checking:', error);
+      throw error;
+    }
   }
 }
 

@@ -1,0 +1,17 @@
+// Program with arrays
+// Initialize array
+arr[0] := 10;
+arr[1] := 20;
+arr[2] := 30;
+
+// Calculate sum of array elements
+sum := 0;
+i := 0;
+while (i < 3) {
+  sum := sum + arr[i];
+  i := i + 1;
+}
+
+// Assertions
+assert(sum == 60);
+assert(arr[1] == 20); 

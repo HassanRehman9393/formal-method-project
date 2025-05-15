@@ -1,0 +1,26 @@
+// Example to demonstrate effects of loop unrolling depth
+// Try with different unrolling depths: 3, 5, 10
+
+// Initialize counter
+x := 0;
+n := 10; // Will need unrolling depth of at least 10 to reach end
+
+// Simple counting loop
+while (x < n) {
+  x := x + 1;
+}
+
+// Assertions that depend on unrolling depth
+// With depth < 10, this will generate a counterexample
+assert(x == 10);
+
+// With depth < 5, this will generate a counterexample
+assert(x >= 5);
+
+// This will be true regardless of unrolling depth
+assert(x >= 0);
+
+// This comment helps understand verification results:
+// - With unrolling depth < 5: only the third assertion will verify
+// - With unrolling depth 5-9: first assertion fails, second and third verify
+// - With unrolling depth >= 10: all assertions verify 

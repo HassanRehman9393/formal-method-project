@@ -1,0 +1,14 @@
+// Program with a loop
+n := 5;
+sum := 0;
+i := 1;
+
+// Loop to calculate sum from 1 to n
+while (i <= n) {
+  sum := sum + i;
+  i := i + 1;
+}
+
+// Assertions
+assert(sum == 15);
+assert(i == 6); 

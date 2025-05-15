@@ -1,0 +1,21 @@
+// Program with a loop that has a counterexample
+// This demonstrates how loop conditions affect verification
+
+// Initialize variables
+x := 0;
+n := 10;
+sum := 0;
+
+// Loop to calculate sum from 0 to n-1
+while (x < n) {
+  sum := sum + x;
+  x := x + 1;
+}
+
+// Assertion that will fail for certain values of n
+// The sum of 0 to n-1 should be n*(n-1)/2, which is 45 for n=10
+// But we're asserting it equals 55 (which is sum of 1 to 10), so it will fail
+assert(sum == 55); // This will fail, correct value is 45
+
+// This assertion would have passed
+// assert(sum == 45); 

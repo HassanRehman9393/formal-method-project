@@ -8,6 +8,9 @@ const verificationRoutes = require('./routes/verificationRoutes');
 const parseRoutes = require('./routes/parseRoutes');
 const equivalenceRoutes = require('./routes/equivalenceRoutes');
 
+// Initialize Z3 service
+const z3Service = require('./services/z3Service');
+
 // Initialize the app
 const app = express();
 
@@ -37,10 +40,25 @@ app.use((err, req, res, next) => {
   });
 });
 
+// Initialize Z3 service before starting the server
+async function startServer() {
+  try {
+    // Initialize Z3 service
+    await z3Service.initialize();
+    console.log('Z3 solver initialized successfully');
+    
+    // Start the server
+    const PORT = process.env.PORT || 3001;
+    app.listen(PORT, () => {
+      console.log(`Server running on port ${PORT}`);
+    });
+  } catch (error) {
+    console.error('Failed to initialize Z3 solver:', error);
+    process.exit(1);
+  }
+}
+
 // Start the server
-const PORT = process.env.PORT || 3001;
-app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
-});
+startServer();
 
 module.exports = app;
