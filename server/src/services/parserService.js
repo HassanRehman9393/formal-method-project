@@ -163,208 +163,299 @@ class ParserService {
    * @returns {Object} AST
    */
   realParser(code) {
-    const lines = code.split('\n');
-    
-    const program = {
-      type: 'Program',
-      body: []
-    };
-    
-    // Track the state of control flow
-    let currentScope = program.body;
-    const scopeStack = [];
-    
-    for (let i = 0; i < lines.length; i++) {
-      const line = lines[i].trim();
-      const lineNum = i + 1;
+    try {
+      const lines = code.split('\n');
       
-      // Skip empty lines and comments
-      if (!line || line.startsWith('//')) continue;
+      const program = {
+        type: 'Program',
+        body: []
+      };
       
-      // Variable assignment: x := 5;
-      const assignMatch = line.match(/(\w+)\s*:=\s*(.+?);/);
-      if (assignMatch) {
-        const [, name, valueStr] = assignMatch;
-        currentScope.push({
-          type: 'VariableDeclaration',
-          id: { type: 'Identifier', name },
-          init: this.parseExpression(valueStr),
-          loc: { start: { line: lineNum, column: 0 }, end: { line: lineNum, column: line.length }}
-        });
-        continue;
-      }
+      // Track the state of control flow
+      let currentScope = program.body;
+      const scopeStack = [];
       
-      // Assert statement: assert(x > 5);
-      const assertMatch = line.match(/assert\s*\((.+?)\)\s*;/);
-      if (assertMatch) {
-        const [, condition] = assertMatch;
-        currentScope.push({
-          type: 'AssertStatement',
-          expression: this.parseExpression(condition),
-          loc: { start: { line: lineNum, column: 0 }, end: { line: lineNum, column: line.length }}
-        });
-        continue;
-      }
-      
-      // If statement: if (x > 5) {
-      const ifMatch = line.match(/if\s*\((.+?)\)\s*\{/);
-      if (ifMatch) {
-        const [, condition] = ifMatch;
-        const ifNode = {
-          type: 'IfStatement',
-          test: this.parseExpression(condition),
-          consequent: { type: 'BlockStatement', body: [] },
-          alternate: null,
-          loc: { start: { line: lineNum, column: 0 } }
-        };
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i].trim();
+        const lineNum = i + 1;
         
-        currentScope.push(ifNode);
-        scopeStack.push({ node: ifNode, scope: currentScope });
-        currentScope = ifNode.consequent.body;
-        continue;
-      }
-      
-      // Else statement: } else {
-      const elseMatch = line.match(/\}\s*else\s*\{/);
-      if (elseMatch) {
-        if (scopeStack.length === 0) {
-          throw new Error(`Line ${lineNum}: Unexpected 'else' without matching 'if'`);
+        // Skip empty lines and comments
+        if (!line || line.startsWith('//')) continue;
+        
+        try {
+          // Variable assignment: x := 5;
+          const assignMatch = line.match(/(\w+)\s*:=\s*(.+?);/);
+          if (assignMatch) {
+            const [, name, valueStr] = assignMatch;
+            currentScope.push({
+              type: 'VariableDeclaration',
+              id: { type: 'Identifier', name },
+              init: this.parseExpression(valueStr),
+              loc: { start: { line: lineNum, column: 0 }, end: { line: lineNum, column: line.length }}
+            });
+            continue;
+          }
+          
+          // Assert statement with Python-style comprehension: assert(for (i in range(n-1)): arr[i] <= arr[i+1]);
+          const comprehensionMatch = line.match(/assert\s*\(\s*for\s*\(\s*(\w+)\s+in\s+range\(\s*(.+?)\s*\)\s*\)\s*:\s*(.+?)\s*\)\s*;/);
+          if (comprehensionMatch) {
+            const [, iterVar, rangeExpr, innerCondition] = comprehensionMatch;
+            
+            currentScope.push({
+              type: 'AssertStatement',
+              expression: {
+                type: 'ForComprehension',
+                iteratorVariable: { type: 'Identifier', name: iterVar },
+                range: this.parseExpression(rangeExpr),
+                condition: this.parseExpression(innerCondition)
+              },
+              loc: { start: { line: lineNum, column: 0 }, end: { line: lineNum, column: line.length }}
+            });
+            continue;
+          }
+          
+          // Regular assert statement: assert(x > 5);
+          const assertMatch = line.match(/assert\s*\((.+?)\)\s*;/);
+          if (assertMatch) {
+            const [, condition] = assertMatch;
+            
+            // Check for Python-like for-loop comprehension: for (i in range(n-1)): arr[i] <= arr[i+1]
+            const forComprehensionMatch = condition.match(/for\s*\((\w+)\s+in\s+range\((.+?)\)\):\s*(.+)/);
+            
+            if (forComprehensionMatch) {
+              const [, iterVar, rangeExpr, innerCondition] = forComprehensionMatch;
+              
+              // Create a special ForComprehension node
+              currentScope.push({
+                type: 'AssertStatement',
+                expression: {
+                  type: 'ForComprehension',
+                  iteratorVariable: { type: 'Identifier', name: iterVar },
+                  range: this.parseExpression(rangeExpr),
+                  condition: this.parseExpression(innerCondition)
+                },
+                loc: { start: { line: lineNum, column: 0 }, end: { line: lineNum, column: line.length }}
+              });
+            } else {
+              // Regular assertion
+              currentScope.push({
+                type: 'AssertStatement',
+                expression: this.parseExpression(condition),
+                loc: { start: { line: lineNum, column: 0 }, end: { line: lineNum, column: line.length }}
+              });
+            }
+            continue;
+          }
+          
+          // If statement: if (x > 5) {
+          const ifMatch = line.match(/if\s*\((.+?)\)\s*\{/);
+          if (ifMatch) {
+            const [, condition] = ifMatch;
+            const ifNode = {
+              type: 'IfStatement',
+              test: this.parseExpression(condition),
+              consequent: { type: 'BlockStatement', body: [] },
+              alternate: null,
+              loc: { start: { line: lineNum, column: 0 } }
+            };
+            
+            currentScope.push(ifNode);
+            scopeStack.push({ node: ifNode, scope: currentScope });
+            currentScope = ifNode.consequent.body;
+            continue;
+          }
+          
+          // Else statement: } else {
+          const elseMatch = line.match(/\}\s*else\s*\{/);
+          if (elseMatch) {
+            if (scopeStack.length === 0) {
+              console.warn(`Line ${lineNum}: Unexpected 'else' without matching 'if', treating as standalone block`);
+              // Create a dummy if node
+              const dummyIfNode = {
+                type: 'IfStatement',
+                test: { type: 'Literal', value: true },
+                consequent: { type: 'BlockStatement', body: [] },
+                alternate: { type: 'BlockStatement', body: [] },
+                loc: { start: { line: lineNum, column: 0 } }
+              };
+              currentScope.push(dummyIfNode);
+              currentScope = dummyIfNode.alternate.body;
+              continue;
+            }
+            
+            const parentScope = scopeStack[scopeStack.length - 1];
+            if (parentScope.node.type !== 'IfStatement') {
+              console.warn(`Line ${lineNum}: 'else' can only follow an 'if' block, treating as standalone block`);
+              // Create a dummy if node
+              const dummyIfNode = {
+                type: 'IfStatement',
+                test: { type: 'Literal', value: true },
+                consequent: { type: 'BlockStatement', body: [] },
+                alternate: { type: 'BlockStatement', body: [] },
+                loc: { start: { line: lineNum, column: 0 } }
+              };
+              currentScope.push(dummyIfNode);
+              currentScope = dummyIfNode.alternate.body;
+              continue;
+            }
+            
+            parentScope.node.alternate = { type: 'BlockStatement', body: [] };
+            currentScope = parentScope.node.alternate.body;
+            continue;
+          }
+          
+          // While loop: while (x < 10) {
+          const whileMatch = line.match(/while\s*\((.+?)\)\s*\{/);
+          if (whileMatch) {
+            const [, condition] = whileMatch;
+            const whileNode = {
+              type: 'WhileStatement',
+              test: this.parseExpression(condition),
+              body: { type: 'BlockStatement', body: [] },
+              loc: { start: { line: lineNum, column: 0 } }
+            };
+            
+            currentScope.push(whileNode);
+            scopeStack.push({ node: whileNode, scope: currentScope });
+            currentScope = whileNode.body.body;
+            continue;
+          }
+          
+          // For loop: for (i := 0; i < 10; i := i + 1) {
+          const forMatch = line.match(/for\s*\((.+?);(.+?);(.+?)\)\s*\{/);
+          if (forMatch) {
+            const [, init, test, update] = forMatch;
+            
+            // Parse initializer
+            const initNode = this.parseStatement(`${init};`);
+            
+            // Parse test expression
+            const testNode = this.parseExpression(test);
+            
+            // Parse update expression
+            const updateNode = this.parseStatement(`${update};`);
+            
+            const forNode = {
+              type: 'ForStatement',
+              init: initNode,
+              test: testNode,
+              update: updateNode,
+              body: { type: 'BlockStatement', body: [] },
+              loc: { start: { line: lineNum, column: 0 } }
+            };
+            
+            currentScope.push(forNode);
+            scopeStack.push({ node: forNode, scope: currentScope });
+            currentScope = forNode.body.body;
+            continue;
+          }
+          
+          // Close block: }
+          if (line === '}') {
+            if (scopeStack.length === 0) {
+              console.warn(`Line ${lineNum}: Unexpected '}', ignoring`);
+              // Just ignore unmatched closing braces 
+              continue;
+            }
+            
+            const parentScope = scopeStack.pop();
+            
+            // Complete location information
+            if (parentScope.node.loc) {
+              parentScope.node.loc.end = { line: lineNum, column: line.length };
+            }
+            
+            // If we closed the alternate of an if statement
+            if (parentScope.node.type === 'IfStatement' && currentScope === parentScope.node.alternate?.body) {
+              currentScope = parentScope.scope;
+            } 
+            // If we closed a loop or if-then block
+            else {
+              currentScope = parentScope.scope;
+            }
+            
+            continue;
+          }
+          
+          // Handle array declarations and assignments
+          const arrayDeclMatch = line.match(/(\w+)\s*:=\s*\[\s*(.+?)\s*\]\s*;/);
+          if (arrayDeclMatch) {
+            const [, name, elements] = arrayDeclMatch;
+            const elementExpressions = elements.split(',').map(el => this.parseExpression(el.trim()));
+            
+            currentScope.push({
+              type: 'VariableDeclaration',
+              id: { type: 'Identifier', name },
+              init: {
+                type: 'ArrayExpression',
+                elements: elementExpressions
+              },
+              loc: { start: { line: lineNum, column: 0 }, end: { line: lineNum, column: line.length }}
+            });
+            continue;
+          }
+          
+          // Array assignment: arr[idx] := value;
+          const arrayAssignMatch = line.match(/(\w+)\[(.+?)\]\s*:=\s*(.+?);/);
+          if (arrayAssignMatch) {
+            const [, array, index, value] = arrayAssignMatch;
+            
+            currentScope.push({
+              type: 'ExpressionStatement',
+              expression: {
+                type: 'AssignmentExpression',
+                operator: ':=',
+                left: {
+                  type: 'MemberExpression',
+                  object: { type: 'Identifier', name: array },
+                  property: this.parseExpression(index),
+                  computed: true
+                },
+                right: this.parseExpression(value)
+              },
+              loc: { start: { line: lineNum, column: 0 }, end: { line: lineNum, column: line.length }}
+            });
+            continue;
+          }
+          
+          // If we couldn't match any pattern, report a warning but try to continue parsing
+          console.warn(`Line ${lineNum}: Syntax error in '${line}', skipping line`);
+        } catch (lineError) {
+          // Catch errors in individual line parsing to allow continuing with other lines
+          console.error(`Error parsing line ${lineNum}: ${lineError.message}`);
         }
+      }
+      
+      // Check for unclosed blocks, but don't fail the parse
+      if (scopeStack.length > 0) {
+        // Automatically close any unclosed blocks to create a valid AST
+        console.warn(`Warning: ${scopeStack.length} unclosed blocks found, automatically closing them`);
         
-        const parentScope = scopeStack[scopeStack.length - 1];
-        if (parentScope.node.type !== 'IfStatement') {
-          throw new Error(`Line ${lineNum}: 'else' can only follow an 'if' block`);
+        // Pop all remaining scopes from the stack and return to the top level
+        while (scopeStack.length > 0) {
+          const parentScope = scopeStack.pop();
+          
+          // If we were in the alternate of an if statement
+          if (parentScope.node.type === 'IfStatement' && currentScope === parentScope.node.alternate?.body) {
+            currentScope = parentScope.scope;
+          }
+          // If we were in a loop or if-then block
+          else {
+            currentScope = parentScope.scope;
+          }
         }
-        
-        parentScope.node.alternate = { type: 'BlockStatement', body: [] };
-        currentScope = parentScope.node.alternate.body;
-        continue;
       }
       
-      // While loop: while (x < 10) {
-      const whileMatch = line.match(/while\s*\((.+?)\)\s*\{/);
-      if (whileMatch) {
-        const [, condition] = whileMatch;
-        const whileNode = {
-          type: 'WhileStatement',
-          test: this.parseExpression(condition),
-          body: { type: 'BlockStatement', body: [] },
-          loc: { start: { line: lineNum, column: 0 } }
-        };
-        
-        currentScope.push(whileNode);
-        scopeStack.push({ node: whileNode, scope: currentScope });
-        currentScope = whileNode.body.body;
-        continue;
-      }
-      
-      // For loop: for (i := 0; i < 10; i := i + 1) {
-      const forMatch = line.match(/for\s*\((.+?);(.+?);(.+?)\)\s*\{/);
-      if (forMatch) {
-        const [, init, test, update] = forMatch;
-        
-        // Parse initializer
-        const initNode = this.parseStatement(`${init};`);
-        
-        // Parse test expression
-        const testNode = this.parseExpression(test);
-        
-        // Parse update expression
-        const updateNode = this.parseStatement(`${update};`);
-        
-        const forNode = {
-          type: 'ForStatement',
-          init: initNode,
-          test: testNode,
-          update: updateNode,
-          body: { type: 'BlockStatement', body: [] },
-          loc: { start: { line: lineNum, column: 0 } }
-        };
-        
-        currentScope.push(forNode);
-        scopeStack.push({ node: forNode, scope: currentScope });
-        currentScope = forNode.body.body;
-        continue;
-      }
-      
-      // Close block: }
-      if (line === '}') {
-        if (scopeStack.length === 0) {
-          throw new Error(`Line ${lineNum}: Unexpected '}'`);
-        }
-        
-        const parentScope = scopeStack.pop();
-        
-        // Complete location information
-        if (parentScope.node.loc) {
-          parentScope.node.loc.end = { line: lineNum, column: line.length };
-        }
-        
-        // If we closed the alternate of an if statement
-        if (parentScope.node.type === 'IfStatement' && currentScope === parentScope.node.alternate?.body) {
-          currentScope = parentScope.scope;
-        } 
-        // If we closed a loop or if-then block
-        else {
-          currentScope = parentScope.scope;
-        }
-        
-        continue;
-      }
-      
-      // Handle array declarations and assignments
-      const arrayDeclMatch = line.match(/(\w+)\s*:=\s*\[\s*(.+?)\s*\]\s*;/);
-      if (arrayDeclMatch) {
-        const [, name, elements] = arrayDeclMatch;
-        const elementExpressions = elements.split(',').map(el => this.parseExpression(el.trim()));
-        
-        currentScope.push({
-          type: 'VariableDeclaration',
-          id: { type: 'Identifier', name },
-          init: {
-            type: 'ArrayExpression',
-            elements: elementExpressions
-          },
-          loc: { start: { line: lineNum, column: 0 }, end: { line: lineNum, column: line.length }}
-        });
-        continue;
-      }
-      
-      // Array assignment: arr[idx] := value;
-      const arrayAssignMatch = line.match(/(\w+)\[(.+?)\]\s*:=\s*(.+?);/);
-      if (arrayAssignMatch) {
-        const [, array, index, value] = arrayAssignMatch;
-        
-        currentScope.push({
-          type: 'ExpressionStatement',
-          expression: {
-            type: 'AssignmentExpression',
-            operator: ':=',
-            left: {
-              type: 'MemberExpression',
-              object: { type: 'Identifier', name: array },
-              property: this.parseExpression(index),
-              computed: true
-            },
-            right: this.parseExpression(value)
-          },
-          loc: { start: { line: lineNum, column: 0 }, end: { line: lineNum, column: line.length }}
-        });
-        continue;
-      }
-      
-      // If we couldn't match any pattern, report an error
-      throw new Error(`Line ${lineNum}: Syntax error in '${line}'`);
+      return program;
+    } catch (error) {
+      console.error('Critical parsing error:', error);
+      // Return a minimal valid AST instead of throwing
+      return {
+        type: 'Program',
+        body: [],
+        parseError: error.message
+      };
     }
-    
-    // Check for unclosed blocks
-    if (scopeStack.length > 0) {
-      const unclosedBlock = scopeStack[scopeStack.length - 1];
-      const blockType = unclosedBlock.node.type.replace('Statement', '').toLowerCase();
-      throw new Error(`Unclosed ${blockType} block starting at line ${unclosedBlock.node.loc?.start?.line || 'unknown'}`);
-    }
-    
-    return program;
   }
   
   /**

@@ -148,5 +148,5 @@ Execution Time: ${result.data.time || 0}ms
   }
 }
 
-// Export a singleton instance
-module.exports = new EquivalenceService();
+// Export the class instead of a singleton instance
+module.exports = EquivalenceService;

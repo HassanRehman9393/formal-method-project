@@ -82,5 +82,5 @@ class SolverService {
   }
 }
 
-// Export a singleton instance
-module.exports = new SolverService(); 
+// Export the class instead of a singleton instance
+module.exports = SolverService; 

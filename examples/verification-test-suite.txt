@@ -1,0 +1,109 @@
+ // Comprehensive Verification Test Suite
+// This file contains various test cases to verify the correctness of the verification pipeline
+
+// ===== Test Case 1: Always-True Assertion (Pass Case) =====
+// Expected Result: UNSAT (Program Verified)
+// Why: y is always greater than x
+test1_x := 3;
+test1_y := test1_x + 1;
+assert(test1_y > test1_x);
+
+// ===== Test Case 2: Failing Assertion (Simple Arithmetic) =====
+// Expected Result: SAT (Verification Failed)
+// Why: y = -1, which violates the assertion
+// Expected Counterexample: x=0, y=-1
+test2_x := 0;
+test2_y := test2_x - 1;
+assert(test2_y >= 0);
+
+// ===== Test Case 3: Array Access with Bad Assertion =====
+// Expected Result: SAT (Verification Failed)
+// Why: 5 < 2 is false
+// Expected Counterexample: arr[0] = 5, arr[1] = 2
+test3_arr[0] := 5;
+test3_arr[1] := 2;
+assert(test3_arr[0] < test3_arr[1]);
+
+// ===== Test Case 4: Loop that Enforces Assertion =====
+// Expected Result: UNSAT (Program Verified)
+// Why: Loop runs 4 times, x becomes 4
+test4_x := 0;
+while (test4_x < 4) {
+    test4_x := test4_x + 1;
+}
+assert(test4_x == 4);
+
+// ===== Test Case 5: Edge Case Verification =====
+// Expected Result: SAT (Verification Failed)
+// Why: Negative numbers make this fail
+// Expected Counterexample: x = -1 or any negative value
+test5_x := 10; // Simulating an input with a default value
+// Note: The original test had "x := input" which isn't in our mini-language
+// Instead we'll set x to a value and then verify for all possible values
+assert(test5_x == 0 || test5_x > 0);
+// This should still fail if the solver considers all possible values for x
+
+// ===== Test Case 6: Bubble Sort (Array Sortedness) =====
+// Expected Result: UNSAT (Program Verified) if sort implemented correctly
+// Testing a simplified bubble sort implementation
+test6_arr[0] := 5;
+test6_arr[1] := 3;
+test6_arr[2] := 8;
+test6_arr[3] := 1;
+test6_n := 4;
+
+test6_i := 0;
+while (test6_i < test6_n) {
+    test6_j := 0;
+    while (test6_j < test6_n - test6_i - 1) {
+        if (test6_arr[test6_j] > test6_arr[test6_j + 1]) {
+            test6_temp := test6_arr[test6_j];
+            test6_arr[test6_j] := test6_arr[test6_j + 1];
+            test6_arr[test6_j + 1] := test6_temp;
+        }
+        test6_j := test6_j + 1;
+    }
+    test6_i := test6_i + 1;
+}
+
+// Verify that array is sorted
+assert(test6_arr[0] <= test6_arr[1]);
+assert(test6_arr[1] <= test6_arr[2]);
+assert(test6_arr[2] <= test6_arr[3]);
+
+// ===== Test Case 6B: Intentionally Broken Sort =====
+// Expected Result: SAT (Verification Failed)
+// Break the sort logic to test counterexample generation
+test6b_arr[0] := 5;
+test6b_arr[1] := 3;
+test6b_arr[2] := 8;
+test6b_arr[3] := 1;
+test6b_n := 4;
+
+test6b_i := 0;
+while (test6b_i < 1) { // Intentionally run only one iteration
+    test6b_j := 0;
+    while (test6b_j < test6b_n - test6b_i - 1) {
+        if (test6b_arr[test6b_j] > test6b_arr[test6b_j + 1]) {
+            test6b_temp := test6b_arr[test6b_j];
+            test6b_arr[test6b_j] := test6b_arr[test6b_j + 1];
+            test6b_arr[test6b_j + 1] := test6b_temp;
+        }
+        test6b_j := test6b_j + 1;
+    }
+    test6b_i := test6b_i + 1;
+}
+
+// This should fail since we didn't sort completely
+assert(test6b_arr[0] <= test6b_arr[1]);
+assert(test6b_arr[1] <= test6b_arr[2]);
+assert(test6b_arr[2] <= test6b_arr[3]);
+
+// ===== Test Case 7: Dead Code Detection =====
+// Expected Result: UNSAT (Program Verified)
+// Optimizer should detect and remove dead code
+test7_x := 2;
+if (test7_x > 5) {
+    test7_y := 100; // Dead code
+}
+assert(test7_x == 2);

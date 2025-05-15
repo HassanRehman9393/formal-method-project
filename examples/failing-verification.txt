@@ -4,7 +4,7 @@ y := 10;
 sum := x + y;
 product := x * y;
 
-// Assertions - the last one will fail
+// Assertions - the last one will fail 
 assert(sum == 15);
 assert(product == 50);
 assert(sum > product); // This will fail 

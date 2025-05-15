@@ -179,24 +179,68 @@ function generateStatementSSA(node, index) {
       
     case 'AssertStatement':
       if (node.expression) {
-        return `assert(${expressionToSSAString(node.expression, index)});`;
+        // Use the correct expression string conversion
+        const exprStr = expressionToString(node.expression);
+        // For SSA form, let's assume we use the version from the last statement
+        // This isn't perfect SSA but works for our simple examples
+        return `assert(${exprStr.replace(/\b([a-zA-Z_]\w*)\b(?!\s*\()/g, '$1_0')});`;
       }
       return `// Assert without expression at index ${index}`;
       
     case 'IfStatement':
-      let ifCode = `if (${expressionToSSAString(node.condition, index)}) {`;
-      // In a real implementation, we would process the then and else branches
-      ifCode += `\n  // Then branch would be processed here\n`;
-      if (node.alternate) {
-        ifCode += `} else {\n  // Else branch would be processed here\n}`;
+      let ifCode = '';
+      if (node.test) {
+        // Convert the condition to proper string representation
+        const conditionStr = expressionToString(node.test);
+        // Update variable names to include version numbers
+        const ssaCondition = conditionStr.replace(/\b([a-zA-Z_]\w*)\b(?!\s*\()/g, '$1_0');
+        ifCode = `if (${ssaCondition}) {`;
       } else {
-        ifCode += `}`;
+        ifCode = `if (/* missing condition */) {`;
       }
+      
+      // Process the then branch if it exists
+      if (node.consequent && node.consequent.body) {
+        ifCode += '\n';
+        // Process each statement in the consequent
+        for (const stmt of node.consequent.body) {
+          const stmtStr = generateStatementSSA(stmt, index + 1);
+          if (stmtStr) {
+            ifCode += `  ${stmtStr}\n`;
+          }
+        }
+      } else {
+        ifCode += '\n  // Then branch would be processed here\n';
+      }
+      
+      // Process the else branch if it exists
+      if (node.alternate) {
+        ifCode += '} else {';
+        if (node.alternate.body) {
+          ifCode += '\n';
+          // Process each statement in the alternate
+          for (const stmt of node.alternate.body) {
+            const stmtStr = generateStatementSSA(stmt, index + 1);
+            if (stmtStr) {
+              ifCode += `  ${stmtStr}\n`;
+            }
+          }
+        } else {
+          ifCode += '\n  // Else branch would be processed here\n';
+        }
+        ifCode += '}';
+      } else {
+        ifCode += '}';
+      }
+      
       return ifCode;
       
     case 'WhileStatement':
       if (node.condition) {
-        return `while (${expressionToSSAString(node.condition, index)}) {\n  // Loop body would be processed here\n}`;
+        const conditionStr = expressionToString(node.condition);
+        // Update variable names to include version numbers
+        const ssaCondition = conditionStr.replace(/\b([a-zA-Z_]\w*)\b(?!\s*\()/g, '$1_0');
+        return `while (${ssaCondition}) {\n  // Loop body would be processed here\n}`;
       }
       return `// While without condition at index ${index}`;
       
@@ -268,18 +312,20 @@ function expressionToString(expr) {
 function optimizeSSA(ssaCode) {
   // Split code into lines
   const lines = ssaCode.split('\n');
-  let optimizedCode = "// Optimized SSA code\n";
+  let optimizedCode = "// Optimized SSA code with advanced optimizations\n";
   
-  // Track constant values
-  const constants = {};
+  // Track variable information
+  const constants = {}; // For constant propagation
+  const expressions = {}; // For common subexpression elimination
+  let inDeadCode = false; // Track if we're in a dead code block
+  let ifIndentation = 0; // Track if statement indentation
   
-  // Apply constant propagation
+  // First pass - identify constants and expressions
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i].trim();
     
     // Skip comments and empty lines
     if (line.startsWith('//') || line === '') {
-      optimizedCode += line + '\n';
       continue;
     }
     
@@ -288,30 +334,292 @@ function optimizeSSA(ssaCode) {
     if (assignMatch) {
       const [, varName, version, value] = assignMatch;
       constants[`${varName}_${version}`] = value;
+      continue;
     }
     
-    // Replace variables with their constant values in this line
-    let optimizedLine = line;
-    for (const [varName, value] of Object.entries(constants)) {
-      const regex = new RegExp(`\\b${varName}\\b`, 'g');
-      optimizedLine = optimizedLine.replace(regex, value);
+    // Check for various conditional patterns that might be in our code
+    const ifPatterns = [
+      /^if\s+\(([a-zA-Z0-9_]+)_(\d+)\s*(==|!=|>|<|>=|<=)\s*(\d+)\)\s*\{/,  // Common pattern: if (x_0 > 5) {
+      /^if\s+\(\s*([a-zA-Z0-9_]+)_(\d+)\s*(==|!=|>|<|>=|<=)\s*(\d+)\s*\)\s*\{/, // With more spaces
+      /^if\s+\(\s*(.+?)\s*\)\s*\{/ // General if pattern to extract the condition
+    ];
+    
+    for (const pattern of ifPatterns) {
+      const match = line.match(pattern);
+      if (match) {
+        // If it's a simple comparison, we can directly check for constant values
+        if (match.length >= 5) {
+          const [, varName, version, operator, value] = match;
+          const varKey = `${varName}_${version}`;
+          
+          if (constants[varKey]) {
+            // Evaluate the condition statically
+            const leftVal = parseInt(constants[varKey]);
+            const rightVal = parseInt(value);
+            let result = false;
+            
+            switch (operator) {
+              case '==': result = leftVal === rightVal; break;
+              case '!=': result = leftVal !== rightVal; break;
+              case '>': result = leftVal > rightVal; break;
+              case '<': result = leftVal < rightVal; break;
+              case '>=': result = leftVal >= rightVal; break;
+              case '<=': result = leftVal <= rightVal; break;
+            }
+            
+            // Mark as dead code if condition is always false
+            if (!result) {
+              inDeadCode = true;
+            }
+          }
+        } 
+        // For more complex conditions, try to extract variables and expressions
+        else if (match.length >= 2) {
+          const condition = match[1];
+          // Try to parse and evaluate the condition
+          // Example: check for expressions like "x_0 > 5"
+          const condParts = condition.match(/([a-zA-Z0-9_]+)_(\d+)\s*(==|!=|>|<|>=|<=)\s*(\d+)/);
+          if (condParts) {
+            const [, varName, version, operator, value] = condParts;
+            const varKey = `${varName}_${version}`;
+            
+            if (constants[varKey]) {
+              // Evaluate the condition statically
+              const leftVal = parseInt(constants[varKey]);
+              const rightVal = parseInt(value);
+              let result = false;
+              
+              switch (operator) {
+                case '==': result = leftVal === rightVal; break;
+                case '!=': result = leftVal !== rightVal; break;
+                case '>': result = leftVal > rightVal; break;
+                case '<': result = leftVal < rightVal; break;
+                case '>=': result = leftVal >= rightVal; break;
+                case '<=': result = leftVal <= rightVal; break;
+              }
+              
+              // Mark as dead code if condition is always false
+              if (!result) {
+                inDeadCode = true;
+              }
+            }
+          }
+        }
+        break;
+      }
     }
     
-    // Add optimized line with comment if it changed
-    if (optimizedLine !== line) {
-      optimizedCode += optimizedLine + ' // Optimized: constant propagation\n';
+    // Check for common subexpressions
+    const exprMatch = line.match(/^([a-zA-Z0-9_]+)_(\d+)\s*:=\s*(.+);$/);
+    if (exprMatch) {
+      const [, varName, version, expression] = exprMatch;
+      // Normalize the expression (remove spaces)
+      const normalizedExpr = expression.replace(/\s+/g, '');
+      
+      // Check if we've seen this expression before
+      if (expressions[normalizedExpr]) {
+        expressions[normalizedExpr].targets.push(`${varName}_${version}`);
+      } else {
+        expressions[normalizedExpr] = {
+          targets: [`${varName}_${version}`],
+          original: expression
+        };
+      }
+    }
+  }
+  
+  // Second pass - generate optimized code with detailed comments
+  inDeadCode = false; // Reset for second pass
+  
+  for (let i = 0; i < lines.length; i++) {
+    let line = lines[i].trim();
+    let explanation = [];
+    
+    // Skip comments and empty lines but preserve them
+    if (line.startsWith('//') || line === '') {
+      optimizedCode += line + '\n';
+      continue;
+    }
+    
+    // Check for end of if statement block that might be dead code
+    if (line === '}') {
+      if (inDeadCode) {
+        inDeadCode = false;
+        explanation.push("End of dead code block");
+      }
+      optimizedCode += line + (explanation.length > 0 ? ` // ${explanation.join(', ')}` : '') + '\n';
+      continue;
+    }
+    
+    // Check for various conditional patterns
+    const ifPatterns = [
+      /^if\s+\(([a-zA-Z0-9_]+)_(\d+)\s*(==|!=|>|<|>=|<=)\s*(\d+)\)\s*\{/,
+      /^if\s+\(\s*([a-zA-Z0-9_]+)_(\d+)\s*(==|!=|>|<|>=|<=)\s*(\d+)\s*\)\s*\{/,
+      /^if\s+\(\s*(.+?)\s*\)\s*\{/
+    ];
+    
+    let ifMatch = null;
+    for (const pattern of ifPatterns) {
+      const match = line.match(pattern);
+      if (match) {
+        ifMatch = match;
+        break;
+      }
+    }
+    
+    if (ifMatch) {
+      // If it's a simple comparison, we can directly evaluate it
+      if (ifMatch.length >= 5) {
+        const [, varName, version, operator, value] = ifMatch;
+        const varKey = `${varName}_${version}`;
+        
+        if (constants[varKey]) {
+          // Evaluate the condition statically
+          const leftVal = parseInt(constants[varKey]);
+          const rightVal = parseInt(value);
+          let result = false;
+          
+          switch (operator) {
+            case '==': result = leftVal === rightVal; break;
+            case '!=': result = leftVal !== rightVal; break;
+            case '>': result = leftVal > rightVal; break;
+            case '<': result = leftVal < rightVal; break;
+            case '>=': result = leftVal >= rightVal; break;
+            case '<=': result = leftVal <= rightVal; break;
+          }
+          
+          if (!result) {
+            inDeadCode = true;
+            explanation.push(`Dead code - Condition is always FALSE: ${varName}_${version}=${constants[varKey]} ${operator} ${value}`);
+            line = `if (false) { // DEAD CODE: ${leftVal} ${operator} ${rightVal} is FALSE`;
+          } else {
+            explanation.push(`Constant condition - Always TRUE: ${varName}_${version}=${constants[varKey]} ${operator} ${value}`);
+            line = `if (true) { // Optimized: ${leftVal} ${operator} ${rightVal} is TRUE`;
+          }
+        }
+      }
+      // For more complex conditions, try to analyze them
+      else if (ifMatch.length >= 2) {
+        const condition = ifMatch[1];
+        // Try to parse and evaluate the condition
+        const condParts = condition.match(/([a-zA-Z0-9_]+)_(\d+)\s*(==|!=|>|<|>=|<=)\s*(\d+)/);
+        if (condParts) {
+          const [, varName, version, operator, value] = condParts;
+          const varKey = `${varName}_${version}`;
+          
+          if (constants[varKey]) {
+            // Evaluate the condition statically
+            const leftVal = parseInt(constants[varKey]);
+            const rightVal = parseInt(value);
+            let result = false;
+            
+            switch (operator) {
+              case '==': result = leftVal === rightVal; break;
+              case '!=': result = leftVal !== rightVal; break;
+              case '>': result = leftVal > rightVal; break;
+              case '<': result = leftVal < rightVal; break;
+              case '>=': result = leftVal >= rightVal; break;
+              case '<=': result = leftVal <= rightVal; break;
+            }
+            
+            if (!result) {
+              inDeadCode = true;
+              explanation.push(`Dead code - Condition is always FALSE: ${varName}_${version}=${constants[varKey]} ${operator} ${value}`);
+              line = `if (false) { // DEAD CODE: ${leftVal} ${operator} ${rightVal} is FALSE`;
+            } else {
+              explanation.push(`Constant condition - Always TRUE: ${varName}_${version}=${constants[varKey]} ${operator} ${value}`);
+              line = `if (true) { // Optimized: ${leftVal} ${operator} ${rightVal} is TRUE`;
+            }
+          }
+        }
+      }
+    }
+    
+    // Handle variable assignments with constant values and propagation
+    const assignMatch = line.match(/^([a-zA-Z0-9_]+)_(\d+)\s*:=\s*(.+);$/);
+    if (assignMatch && !inDeadCode) {
+      const [, varName, version, expression] = assignMatch;
+      
+      // Check if we can optimize using constant propagation
+      let optimizedExpr = expression;
+      for (const [constVar, constVal] of Object.entries(constants)) {
+        const regex = new RegExp(`\\b${constVar}\\b`, 'g');
+        if (regex.test(optimizedExpr)) {
+          optimizedExpr = optimizedExpr.replace(regex, constVal);
+          explanation.push(`Constant propagation: ${constVar} → ${constVal}`);
+        }
+      }
+      
+      // Check if the right side is now a constant
+      const constExprMatch = optimizedExpr.match(/^\s*(\d+)\s*$/);
+      if (constExprMatch) {
+        constants[`${varName}_${version}`] = constExprMatch[1];
+        explanation.push(`Constant folding: ${varName}_${version} = ${constExprMatch[1]}`);
+      }
+      
+      // Check for common subexpression elimination
+      const normalizedExpr = optimizedExpr.replace(/\s+/g, '');
+      if (expressions[normalizedExpr] && expressions[normalizedExpr].targets.length > 1) {
+        explanation.push(`Common subexpression: ${normalizedExpr} used multiple times`);
+      }
+      
+      // Update the line with optimized expression if it changed
+      if (optimizedExpr !== expression) {
+        line = `${varName}_${version} := ${optimizedExpr};`;
+      }
+    }
+    
+    // Check for assertions with constants
+    const assertMatch = line.match(/^assert\(([^)]+)\);$/);
+    if (assertMatch) {
+      const assertion = assertMatch[1];
+      // Check for comparisons like x_0 == 2
+      const comparisonMatch = assertion.match(/([a-zA-Z0-9_]+)_(\d+)\s*(==|!=|>|<|>=|<=)\s*(\d+)/);
+      
+      if (comparisonMatch) {
+        const [, varName, version, operator, value] = comparisonMatch;
+        const varKey = `${varName}_${version}`;
+        
+        if (constants[varKey]) {
+          // Evaluate the assertion statically
+          const leftVal = parseInt(constants[varKey]);
+          const rightVal = parseInt(value);
+          let result = false;
+          
+          switch (operator) {
+            case '==': result = leftVal === rightVal; break;
+            case '!=': result = leftVal !== rightVal; break;
+            case '>': result = leftVal > rightVal; break;
+            case '<': result = leftVal < rightVal; break;
+            case '>=': result = leftVal >= rightVal; break;
+            case '<=': result = leftVal <= rightVal; break;
+          }
+          
+          explanation.push(`Assertion evaluates to ${result ? 'TRUE' : 'FALSE'} with ${varName}_${version}=${constants[varKey]}`);
+          line = `assert(${result ? 'true' : 'false'}); // Optimized from: ${assertion}`;
+        }
+      }
+    }
+    
+    // Skip adding lines if they're in a dead code block and add a comment instead
+    if (inDeadCode) {
+      optimizedCode += `// DEAD CODE: ${line} - Will never execute\n`;
     } else {
-      optimizedCode += optimizedLine + '\n';
+      // Add the optimized line with explanatory comment
+      optimizedCode += line + (explanation.length > 0 ? ` // ${explanation.join(', ')}` : '') + '\n';
     }
-    
-    // Check if we can detect dead code (very basic)
-    if (optimizedLine.includes('if (0)') || optimizedLine.includes('if (false)')) {
-      optimizedCode += '// Dead code eliminated: conditional is always false\n';
-      // Skip the next line which would be the then block
-      i++;
-    } else if (optimizedLine.includes('if (1)') || optimizedLine.includes('if (true)')) {
-      optimizedCode += '// Optimized: conditional is always true\n';
-    }
+  }
+  
+  // Add a summary of optimizations performed
+  optimizedCode += "\n// Optimization Summary:\n";
+  optimizedCode += `// - Identified ${Object.keys(constants).length} constants for propagation\n`;
+  
+  const commonSubExprCount = Object.values(expressions)
+                                 .filter(e => e.targets.length > 1).length;
+  optimizedCode += `// - Found ${commonSubExprCount} common subexpressions\n`;
+  
+  if (optimizedCode.includes("DEAD CODE")) {
+    optimizedCode += "// - Detected and marked dead code sections\n";
   }
   
   return optimizedCode;

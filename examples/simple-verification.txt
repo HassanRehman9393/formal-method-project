@@ -3,7 +3,7 @@ x := 5;
 y := 10;
 sum := x + y;
 product := x * y;
-
+ 
 // Assertions that should be verified
 assert(sum == 15);
 assert(product == 50);

@@ -15,9 +15,11 @@ class Z3Service {
     this.solverInstanceMaxAge = 30 * 60 * 1000; // 30 minutes max age for solver instances
     this.initialized = false;
     
-    // Initialize Z3
-    this.initialize();
-    console.log('[Z3Service] Service initialized');
+    // Initialize Z3 asynchronously
+    this.initialize().catch(error => {
+      console.error('Failed to initialize Z3:', error);
+    });
+    console.log('[Z3Service] Service initialization started');
   }
 
   async initialize() {
@@ -29,11 +31,21 @@ class Z3Service {
       // Initialize the real Z3 solver using WebAssembly
       this.z3 = await init();
       
+      // Run a simple test to ensure it's working
+      const { Context } = this.z3;
+      const ctx = new Context();
+      const x = ctx.Int.const('x');
+      const solver = new ctx.Solver();
+      solver.add(x.gt(ctx.Int.val(0)));
+      const result = await solver.check();
+      
+      console.log('Z3 solver test result:', result);
       console.log('Z3 solver initialized successfully');
       this.initialized = true;
       return true;
     } catch (error) {
       console.error('Error initializing Z3:', error);
+      this.initialized = false;
       throw error;
     }
   }
@@ -93,11 +105,10 @@ class Z3Service {
         optimizedConstraints = constraints;
       }
       
-      // Check if the assertions are already in negated form (for sat checking)
-      const hasNegatedAssertions = this.hasNegatedAssertions(optimizedConstraints);
-      console.log("Has negated assertions:", hasNegatedAssertions);
+      // Check if there are any assertion constraints marked as assertions
+      const hasAssertionConstraints = this.hasAssertionConstraints(optimizedConstraints);
       
-      // Run the real verification with timeout handling
+      // Run the actual verification with timeout handling
       let verificationResult;
       try {
         const verificationPromise = this.runVerification(optimizedConstraints, options);
@@ -126,54 +137,49 @@ class Z3Service {
       
       // Process verification result
       console.log("Verification result:", verificationResult.result);
+      console.log("Verification model:", verificationResult.model ? "Present" : "Missing");
       
+      // For verification using assertion negation:
+      // - SAT means the negated assertion is satisfiable, so the original assertion is not valid (verification fails)
+      // - UNSAT means the negated assertion is not satisfiable, so the original assertion is valid (verification passes)
       if (verificationResult.result === 'sat') {
-        // Satisfiable means:
-        // - For negated assertions: The assertion doesn't hold (verification failed)
-        // - For direct assertions: The assertions are satisfied (verification succeeded)
-        const verified = !hasNegatedAssertions;
+        // Verification failed - assertion violation found
+        console.log("Assertion violation found (SAT result)");
         
-        // Extract counterexample if verification failed
-        const counterexample = !verified ? 
-          this.extractCounterexample(verificationResult, optimizedConstraints, options) : 
-          null;
+        // Extract counterexample showing why verification failed
+        const counterexample = this.extractCounterexample(verificationResult, optimizedConstraints, options);
         
         return {
           success: true,
-          verified,
-          message: verified 
-            ? 'All assertions verified' 
-            : (counterexample ? 'Verification failed: found counterexample' : 'Verification failed'),
-          counterexample,
+          verified: false, // IMPORTANT: SAT means verification FAILED
+          message: 'Verification failed: assertion violation found',
+          counterexample: counterexample,
           executionTime: verificationResult.time || 0
         };
       } else if (verificationResult.result === 'unsat') {
-        // Unsatisfiable means:
-        // - For negated assertions: The assertion holds (verification succeeded)
-        // - For direct assertions: The assertions can't be satisfied (verification failed)
-        const verified = hasNegatedAssertions;
+        // Verification succeeded - no assertion violations possible
+        console.log("No assertion violations possible (UNSAT result)");
         
         return {
           success: true,
-          verified,
-          message: verified 
-            ? 'All assertions verified' 
-            : 'Verification failed: no valid model found',
+          verified: true, // IMPORTANT: UNSAT means verification SUCCEEDED
+          message: 'All assertions verified',
           executionTime: verificationResult.time || 0
         };
       } else {
-        // Unknown or other result
+        // Unknown result - solver could not determine satisfiability
+        console.log("Unknown solver result:", verificationResult.result);
+        
         return {
-          success: false,
-          verified: false,
-          message: `Z3 solver returned unknown result: ${verificationResult.result}`,
+          success: true,
+          verified: false, // Conservative approach: treat unknown as failure
+          message: `Verification inconclusive: ${verificationResult.result}`,
           executionTime: verificationResult.time || 0
         };
       }
     } catch (error) {
-      console.error('Error in verification:', error);
+      console.error('Error in verifyAssertions:', error);
       
-      // Return error instead of falling back to mock
       return {
         success: false,
         verified: false,
@@ -184,486 +190,410 @@ class Z3Service {
   }
   
   /**
-   * Run verification using the Z3 solver
-   * @param {Object} constraints - The constraints to verify
+   * Run the actual verification using Z3
+   * @param {Object} constraints - SMT constraints
    * @param {Object} options - Verification options
-   * @returns {Promise<Object>} Verification result
+   * @returns {Promise<Object>} Verification result with model if SAT
    */
   async runVerification(constraints, options = {}) {
-    console.log('Running verification with constraints');
-    
-    const { Context } = this.z3;
-    const ctx = new Context();
-    
-    // Create solver
-    const solver = new ctx.Solver();
-    
-    // Track declared variables for model extraction
-    const variableMap = new Map();
+    console.log('Running Z3 verification...');
+    const startTime = Date.now();
     
     try {
-      // Check if we should use SMT script
-      if (constraints.smtScript) {
-        try {
-          // Extract variable names from declarations
-          const varDeclarations = constraints.smtScript.match(/\(declare-const\s+(\w+)\s+(\w+)\)/g) || [];
-          
-          for (const decl of varDeclarations) {
-            const match = decl.match(/\(declare-const\s+(\w+)\s+(\w+)\)/);
-            if (match && match[1] && match[2]) {
-              const varName = match[1];
-              const typeName = match[2].toLowerCase();
-              
-              // Create variables using Z3 API
-              if (typeName === 'int') {
-                variableMap.set(varName, ctx.Int.const(varName));
-              } else if (typeName === 'bool') {
-                variableMap.set(varName, ctx.Bool.const(varName));
-              } else if (typeName === 'real') {
-                variableMap.set(varName, ctx.Real.const(varName));
-              }
-            }
-          }
-          
-          // For SMT-script processing, add all declarations to solver
-          const lines = constraints.smtScript.split('\n');
-          for (const line of lines) {
-            const trimmedLine = line.trim();
-            
-            if (trimmedLine.startsWith('(declare-const')) {
-              // Add declaration - already added variables to variableMap above
-              solver.fromString(trimmedLine);
-            } else if (trimmedLine.startsWith('(assert')) {
-              // Add assertion
-              solver.fromString(trimmedLine);
-            }
-          }
-        } catch (err) {
-          console.warn('Error parsing SMT script, using string parsing fallback:', err);
-          
-          // Replace multi-line scripts with newlines for proper parsing
-          const cleanScript = constraints.smtScript.replace(/\r\n/g, '\n');
-          solver.fromString(cleanScript);
-        }
-      } else {
-        // Process individual declarations and assertions
-        
-        // First add all declarations to ensure variables are defined
-        for (const declaration of constraints.declarations || []) {
-          if (typeof declaration === 'string') {
-            try {
-              // Extract variable info from declaration
-              const match = declaration.match(/declare-const\s+(\w+)\s+(\w+)/);
-              if (match && match[1] && match[2]) {
-                const varName = match[1];
-                const typeName = match[2].toLowerCase();
-                
-                // Create variables using Z3 API
-                if (typeName === 'int') {
-                  variableMap.set(varName, ctx.Int.const(varName));
-                  // Add declaration directly
-                  solver.fromString(`(declare-const ${varName} Int)`);
-                } else if (typeName === 'bool') {
-                  variableMap.set(varName, ctx.Bool.const(varName));
-                  // Add declaration directly
-                  solver.fromString(`(declare-const ${varName} Bool)`);
-                } else if (typeName === 'real') {
-                  variableMap.set(varName, ctx.Real.const(varName));
-                  // Add declaration directly
-                  solver.fromString(`(declare-const ${varName} Real)`);
-                }
-              } else {
-                // Just try to add it directly
-                solver.fromString(`(${declaration})`);
-              }
-            } catch (err) {
-              console.warn(`Error parsing declaration: ${declaration}`, err);
-            }
-          } else if (declaration.formula) {
-            solver.add(declaration.formula);
-          }
-        }
-        
-        // Then add assertions
-        for (const assertion of constraints.assertions || []) {
-          if (typeof assertion === 'string') {
-            try {
-              // If it's not already wrapped in (assert ...), wrap it
-              const assertStr = assertion.trim().startsWith('assert')
-                ? `(${assertion})`
-                : `(assert ${assertion})`;
-              
-              solver.fromString(assertStr);
-            } catch (err) {
-              console.warn(`Error parsing assertion: ${assertion}`, err);
-            }
-          } else if (assertion.constraint) {
-            try {
-              const constraintStr = typeof assertion.constraint === 'string'
-                ? assertion.constraint
-                : JSON.stringify(assertion.constraint);
-              
-              // If it's not already wrapped in (assert ...), wrap it
-              const assertStr = constraintStr.trim().startsWith('assert')
-                ? `(${constraintStr})`
-                : `(assert ${constraintStr})`;
-              
-              solver.fromString(assertStr);
-            } catch (err) {
-              console.warn(`Error parsing constraint: ${assertion.constraint}`, err);
-            }
-          } else if (assertion.formula) {
-            solver.add(assertion.formula);
-          }
-        }
+      await this.initialize();
+      
+      // Create Z3 context and solver
+      const { Context } = this.z3;
+      const ctx = new Context();
+      const solver = new ctx.Solver();
+      
+      // Set logic if specified (default to QF_ALIA - Quantifier-Free Arrays and Linear Integer Arithmetic)
+      const logic = options.logic || 'QF_ALIA';
+      solver.set('logic', logic);
+      
+      // Get the SMT script from constraints
+      const smtScript = constraints.smtScript || this.generateSMTScript(constraints);
+      
+      // Parse SMT-LIB2 script
+      try {
+        solver.fromString(smtScript);
+      } catch (parseError) {
+        console.error('Error parsing SMT script:', parseError);
+        console.error('SMT script:', smtScript.substring(0, 1000) + '...');
+        throw new Error(`SMT parsing error: ${parseError.message}`);
       }
       
       // Check satisfiability
-      const startTime = Date.now();
       const result = await solver.check();
       const endTime = Date.now();
+      const executionTime = endTime - startTime;
       
-      // Get model if result is sat
+      console.log(`Z3 solver returned ${result} in ${executionTime}ms`);
+      
+      // If satisfiable, get the model
       let model = null;
       if (result === 'sat') {
-        model = solver.model();
+        try {
+          model = await solver.model();
+          console.log('Model retrieved:', model !== null);
+        } catch (modelError) {
+          console.error('Error retrieving model:', modelError);
+        }
       }
       
-      // Return result information
       return {
-        result,
+        result: result.toString(),
         model,
-        solver,
-        variableMap,
-        assertions: solver.assertions(),
-        time: endTime - startTime
+        time: executionTime
       };
     } catch (error) {
+      const endTime = Date.now();
       console.error('Error in Z3 verification:', error);
+      
       throw error;
     }
   }
   
   /**
-   * Run a simple Z3 test
-   * @returns {Promise<Object>} Test result
+   * Check if constraints contain assertion constraints
+   * @param {Object} constraints - SMT constraints
+   * @returns {boolean} True if has assertion constraints
    */
-  async runTest() {
+  hasAssertionConstraints(constraints) {
+    if (!constraints || !constraints.assertions || !Array.isArray(constraints.assertions)) {
+      return false;
+    }
+    
+    // Check if any constraint is marked as an assertion
+    return constraints.assertions.some(assertion => 
+      assertion.isAssertion || 
+      (assertion.description && assertion.description.toLowerCase().includes('assert'))
+    );
+  }
+  
+  /**
+   * Extract counterexample from satisfiable model
+   * @param {Object} result - Verification result with model
+   * @param {Object} constraints - Original constraints
+   * @param {Object} options - Extraction options
+   * @returns {Object} Counterexample with variable values
+   */
+  extractCounterexample(result, constraints, options = {}) {
+    if (!result.model) {
+      console.warn('No model available for counterexample extraction');
+      return null;
+    }
+    
     try {
-      await this.initialize();
+      // Extract variable declarations from constraints
+      const variableNames = new Set();
+      const arrayNames = new Set();
       
-      console.log('Running Z3 test');
-      
-      const { Context } = this.z3;
-      const ctx = new Context();
-      
-      // Define a simple assertion
-      const solver = new ctx.Solver();
-      
-      // Define variables first
-      const x = ctx.Int.const('x');
-      
-      // Add constraints
-      solver.add(x.gt(ctx.Int.val(0))); // x > 0
-      solver.add(x.lt(ctx.Int.val(10))); // x < 10
-      
-      // Check satisfiability
-      const result = await solver.check();
-      
-      // Get model if satisfiable
-      let model = null;
-      if (result === 'sat') {
-        model = solver.model();
+      // Get variable and array names from constraints
+      if (constraints.variables && Array.isArray(constraints.variables)) {
+        constraints.variables.forEach(v => variableNames.add(v));
       }
       
-      return {
-        success: true,
-        result,
-        model: model ? model.toString() : null
+      if (constraints.arrays && Array.isArray(constraints.arrays)) {
+        constraints.arrays.forEach(a => arrayNames.add(a));
+      }
+      
+      // Add _final variables which are the ones we want to show in counterexamples
+      const finalVarNames = new Set();
+      variableNames.forEach(v => {
+        if (!v.endsWith('_final')) {
+          finalVarNames.add(`${v}_final`);
+        } else {
+          finalVarNames.add(v);
+        }
+      });
+      
+      // Add _final arrays which are the ones we want to show in counterexamples
+      const finalArrayNames = new Set();
+      arrayNames.forEach(a => {
+        if (!a.endsWith('_final')) {
+          finalArrayNames.add(`${a}_final`);
+        } else {
+          finalArrayNames.add(a);
+        }
+      });
+      
+      // Extract all constant declarations from model
+      const modelEntries = result.model.entries();
+      const counterexample = {
+        inputs: {},
+        state: {},
+        arrays: {}
       };
+      
+      // Process each variable in the model
+      for (const [name, value] of modelEntries) {
+        const varName = name.toString();
+        
+        // Skip internal variables
+        if (varName.startsWith('$') || varName.startsWith('!')) {
+          continue;
+        }
+        
+        // Check if it's a final variable (we want these for counterexample)
+        const isFinalVar = varName.endsWith('_final');
+        const baseVarName = isFinalVar ? varName.substring(0, varName.length - 6) : varName;
+        
+        // Format the value based on its type
+        let formattedValue;
+        if (value.type && value.type.name === 'Array') {
+          // Handle arrays (partial information from the model)
+          const arrayValues = {};
+          
+          // Find array entries in the model
+          for (let i = 0; i < 10; i++) {  // Limit to checking first 10 indices
+            try {
+              const indexValue = value.eval(i);
+              if (indexValue !== undefined) {
+                arrayValues[i] = this.formatZ3Value(indexValue);
+              }
+            } catch (error) {
+              // Ignore errors when evaluating array indices
+            }
+          }
+          
+          if (isFinalVar) {
+            counterexample.arrays[baseVarName] = arrayValues;
+          }
+        } else {
+          // Handle regular variables
+          formattedValue = this.formatZ3Value(value);
+          
+          if (isFinalVar) {
+            // Store in main counterexample for display
+            counterexample.state[baseVarName] = formattedValue;
+            
+            // Also add to flattened structure for easier access
+            counterexample[baseVarName] = formattedValue;
+          } else {
+            // This is an input variable or intermediate state
+            counterexample.inputs[varName] = formattedValue;
+          }
+        }
+      }
+      
+      // Find the assertion that failed
+      let failedAssertion = null;
+      if (constraints.assertions && Array.isArray(constraints.assertions)) {
+        // Look for assertions
+        const assertions = constraints.assertions.filter(a => 
+          a.isAssertion || 
+          (a.description && a.description.toLowerCase().includes('assert'))
+        );
+        
+        // If we have only one assertion, it must be the one that failed
+        if (assertions.length === 1) {
+          failedAssertion = assertions[0].description || assertions[0].constraint;
+        }
+        // If we have multiple assertions, try to find the one that failed
+        else if (assertions.length > 1) {
+          // For now, just take the first one (this can be improved)
+          failedAssertion = assertions[0].description || assertions[0].constraint;
+        }
+      }
+      
+      if (failedAssertion) {
+        counterexample.failedAssertion = failedAssertion;
+      }
+      
+      return counterexample;
     } catch (error) {
-      console.error('Error in Z3 test:', error);
+      console.error('Error extracting counterexample:', error);
       return {
-        success: false,
-        error: error.message
+        error: 'Failed to extract counterexample: ' + error.message
       };
     }
   }
   
   /**
-   * Check equivalence between two programs
-   * @param {Object} constraints - The combined constraints from both programs
+   * Format Z3 value into JavaScript representation
+   * @param {Object} value - Z3 value
+   * @returns {*} Formatted value
+   */
+  formatZ3Value(value) {
+    if (!value) return null;
+    
+    try {
+      // Check if it's a numeric value
+      if (value.asNumber !== undefined) {
+        return value.asNumber();
+      }
+      // Check if it's a boolean
+      else if (value.bool !== undefined) {
+        return value.bool;
+      }
+      // Check if it's a string
+      else if (typeof value.asString === 'function') {
+        return value.asString();
+      }
+      // If none of the above, convert to string representation
+      else {
+        return value.toString();
+      }
+    } catch (error) {
+      console.warn('Error formatting Z3 value:', error);
+      return value.toString();
+    }
+  }
+  
+  /**
+   * Generate SMT-LIB2 script from constraints
+   * @param {Object} constraints - Constraints object
+   * @returns {String} SMT-LIB2 script
+   */
+  generateSMTScript(constraints) {
+    let script = ";; SMT-LIB2 Script\n";
+    script += "(set-logic QF_ALIA)\n\n";
+    
+    // Add declarations
+    if (constraints.declarations && Array.isArray(constraints.declarations)) {
+      script += ";; Declarations\n";
+      for (const decl of constraints.declarations) {
+        script += decl + "\n";
+      }
+      script += "\n";
+    }
+    
+    // Add assertions
+    if (constraints.assertions && Array.isArray(constraints.assertions)) {
+      script += ";; Assertions\n";
+      for (const assertion of constraints.assertions) {
+        if (typeof assertion === 'string') {
+          script += "(assert " + assertion + ")\n";
+        } else if (assertion.constraint) {
+          script += "(assert " + assertion.constraint + ") ;; " + (assertion.description || '') + "\n";
+        }
+      }
+      script += "\n";
+    }
+    
+    // Add check-sat and get-model
+    script += ";; Check satisfiability\n";
+    script += "(check-sat)\n";
+    script += "(get-model)\n";
+    
+    return script;
+  }
+  
+  /**
+   * Get effective timeout based on options and defaults
+   * @param {Object} options - Options object
+   * @returns {Number} Timeout in milliseconds
+   */
+  getEffectiveTimeout(options) {
+    // Use specified timeout or default
+    const baseTimeout = options.timeout || this.defaultTimeout;
+    
+    // Apply adaptive timeout if requested
+    if (options.adaptiveTimeout) {
+      // Scale based on constraint complexity (simplified approach)
+      const numConstraints = options.assertions ? options.assertions.length : 0;
+      const complexityFactor = Math.min(3, 1 + (numConstraints / 20)); // Max 3x multiplier
+      
+      return Math.min(baseTimeout * complexityFactor, 30000); // Cap at 30 seconds
+    }
+    
+    return baseTimeout;
+  }
+  
+  /**
+   * Check if two programs are equivalent
+   * @param {Object} constraints - Combined constraints from both programs
    * @param {Object} options - Verification options
-   * @returns {Promise<Object>} Equivalence check result
+   * @returns {Promise<Object>} Equivalence result
    */
   async checkEquivalence(constraints, options = {}) {
     try {
       await this.initialize();
       
-      // Validate constraints
-      if (!constraints || !constraints.smtScript) {
+      // Apply constraint optimization
+      const optimizedConstraints = constraintOptimizer.simplifyConstraints(constraints);
+      
+      // Setup timeout
+      const timeout = this.getEffectiveTimeout(options);
+      const timeoutPromise = new Promise((_, reject) => {
+        setTimeout(() => reject(new Error('Z3 solver timeout')), timeout);
+      });
+      
+      // Run verification with timeout
+      let verificationResult;
+      try {
+        const verificationPromise = this.runVerification(optimizedConstraints, options);
+        verificationResult = await Promise.race([verificationPromise, timeoutPromise]);
+      } catch (error) {
+        console.error('Equivalence checking error or timeout:', error);
+        
+        if (error.message === 'Z3 solver timeout') {
+          return {
+            success: true,
+            equivalent: false,
+            timedOut: true,
+            message: `Equivalence checking timed out after ${timeout}ms`,
+            time: new Date().toISOString()
+          };
+        }
+        
         return {
           success: false,
-          message: 'Invalid constraints provided for equivalence check'
+          equivalent: false,
+          message: `Z3 solver error: ${error.message}`,
+          error: error.message
         };
       }
       
-      // Run the equivalence check using the same solver mechanism
-      const result = await this.runVerification(constraints, options);
-      
-      if (result.result === 'sat') {
-        // If sat, programs are not equivalent (found counterexample)
-        const counterexample = this.extractCounterexample(result, constraints, options);
+      // For equivalence checking:
+      // - SAT means the difference constraint is satisfiable, so programs are NOT equivalent
+      // - UNSAT means the difference constraint is not satisfiable, so programs ARE equivalent
+      if (verificationResult.result === 'sat') {
+        // Programs are not equivalent - extract counterexample
+        console.log("Programs are not equivalent (SAT result)");
+        const counterexample = this.extractCounterexample(verificationResult, optimizedConstraints, options);
         
         return {
           success: true,
           equivalent: false,
-          message: 'Programs are not semantically equivalent',
-          counterexample,
-          executionTime: result.time || 0
+          message: 'Programs are not equivalent',
+          counterexample: counterexample,
+          executionTime: verificationResult.time || 0
         };
-      } else if (result.result === 'unsat') {
-        // If unsat, programs are equivalent (no counterexample found)
+      } else if (verificationResult.result === 'unsat') {
+        // Programs are equivalent
+        console.log("Programs are equivalent (UNSAT result)");
+        
         return {
           success: true,
           equivalent: true,
-          message: 'Programs are semantically equivalent',
-          executionTime: result.time || 0
+          message: 'Programs are equivalent',
+          executionTime: verificationResult.time || 0
         };
       } else {
-        // Unknown or other result
+        // Unknown result
+        console.log("Equivalence checking inconclusive:", verificationResult.result);
+        
         return {
-          success: false,
-          equivalent: false,
-          message: `Z3 solver returned unknown result: ${result.result}`,
-          executionTime: result.time || 0
+          success: true,
+          equivalent: false, // Conservative approach: treat unknown as not equivalent
+          message: `Equivalence checking inconclusive: ${verificationResult.result}`,
+          executionTime: verificationResult.time || 0
         };
       }
     } catch (error) {
-      console.error('Error checking equivalence:', error);
+      console.error('Error in checkEquivalence:', error);
       
-      // Return error instead of falling back to mock
       return {
         success: false,
         equivalent: false,
-        message: `Z3 solver error: ${error.message}`,
+        message: `Equivalence checking error: ${error.message}`,
         error: error.message
       };
     }
   }
-  
-  /**
-   * Checks if constraints contain negated assertions
-   * In a negated form, we're checking for counterexample (sat = verification failed)
-   * @param {Object} constraints - The constraints to check
-   * @returns {boolean} - True if assertions are negated
-   */
-  hasNegatedAssertions(constraints) {
-    // Look for negated assertions in SMT script or assertions
-    
-    // Check SMT script
-    if (constraints.smtScript) {
-      const lines = constraints.smtScript.split('\n');
-      
-      for (const line of lines) {
-        const trimmedLine = line.trim();
-        
-        // Look for patterns like "assert (not" or "assert (<= ... 0)" for a > 0 assertion
-        if (
-          (trimmedLine.startsWith('(assert (not') || trimmedLine.startsWith('(assert(not')) ||
-          // Check for common negation patterns for inequalities
-          (trimmedLine.includes('(assert (<=') && trimmedLine.includes('0)')) ||
-          (trimmedLine.includes('(assert (>=') && trimmedLine.includes('0)')) ||
-          (trimmedLine.includes('(assert (=') && trimmedLine.includes('false)'))
-        ) {
-          return true;
-        }
-      }
-    }
-    
-    // Check individual assertions
-    if (constraints.assertions) {
-      for (const assertion of constraints.assertions) {
-        if (typeof assertion === 'string') {
-          if (
-            assertion.includes('(not ') ||
-            assertion.includes('<= ') ||
-            assertion.includes('>= 0')
-          ) {
-            return true;
-          }
-        } else if (assertion.constraint) {
-          const constraintStr = typeof assertion.constraint === 'string'
-            ? assertion.constraint
-            : JSON.stringify(assertion.constraint);
-          
-          if (
-            constraintStr.includes('(not ') ||
-            constraintStr.includes('<= ') ||
-            constraintStr.includes('>= 0')
-          ) {
-            return true;
-          }
-        }
-      }
-    }
-    
-    // Default: assume assertions are in direct form (unsat = verification failed)
-    return false;
-  }
-  
-  /**
-   * Extract a counterexample from verification result
-   * @param {Object} result - Verification result
-   * @param {Object} constraints - The constraints used
-   * @param {Object} options - Extraction options
-   * @returns {Object|null} Counterexample data or null
-   */
-  extractCounterexample(result, constraints, options = {}) {
-    try {
-      if (!result.model) {
-        return null;
-      }
-      
-      const model = result.model;
-      const inputs = {};
-      const state = {};
-      
-      // First try to use the variable mapping from the solver
-      if (result.variableMap && result.variableMap.size > 0) {
-        for (const [varName, z3Var] of result.variableMap.entries()) {
-          try {
-            const value = model.eval(z3Var);
-            if (value) {
-              // For input variables (non-SSA)
-              if (!varName.includes('_')) {
-                inputs[varName] = value.toString();
-              }
-              
-              // For all state variables
-              const baseVarName = varName.split('_')[0];
-              if (!baseVarName.startsWith('tmp') && !baseVarName.startsWith('$')) {
-                state[varName] = value.toString();
-              }
-            }
-          } catch (err) {
-            console.warn(`Error extracting value for ${varName}:`, err);
-          }
-        }
-      } else {
-        // Fallback: Try to extract variables from constraints
-        const variables = new Set();
-        
-        // Look for variable declarations
-        if (constraints.declarations) {
-          for (const decl of constraints.declarations) {
-            if (typeof decl === 'string') {
-              // Try to extract variable name from declaration
-              const match = decl.match(/declare-const\s+(\w+)/);
-              if (match && match[1]) {
-                variables.add(match[1]);
-              }
-            }
-          }
-        }
-        
-        // Add any explicitly provided variables
-        if (constraints.variables) {
-          for (const variable of constraints.variables) {
-            if (typeof variable === 'string') {
-              variables.add(variable);
-            } else if (variable && variable.name) {
-              variables.add(variable.name);
-            }
-          }
-        }
-        
-        // Try to use model.get for each variable
-        for (const varName of variables) {
-          try {
-            // For input variables (non-SSA)
-            if (!varName.includes('_')) {
-              // Try direct model.get() approach
-              try {
-                const value = model.get(varName);
-                if (value) {
-                  inputs[varName] = value.toString();
-                }
-              } catch (err) {
-                console.warn(`Error getting ${varName}:`, err);
-              }
-            }
-            
-            // For all state variables
-            const baseVarName = varName.split('_')[0];
-            if (!baseVarName.startsWith('tmp') && !baseVarName.startsWith('$')) {
-              try {
-                const value = model.get(varName);
-                if (value) {
-                  state[varName] = value.toString();
-                }
-              } catch (err) {
-                console.warn(`Error getting ${varName}:`, err);
-              }
-            }
-          } catch (err) {
-            console.warn(`Error processing ${varName}:`, err);
-          }
-        }
-      }
-      
-      // Fallback to extracting directly from model string if nothing was found
-      if (Object.keys(inputs).length === 0) {
-        try {
-          const modelStr = model.toString();
-          const modelLines = modelStr.split('\n');
-          
-          for (const line of modelLines) {
-            const match = line.match(/\(define-fun\s+(\w+)\s+.*\s+(\d+|-\d+)\)/);
-            if (match && match[1] && match[2]) {
-              const varName = match[1];
-              const value = match[2];
-              
-              if (!varName.includes('_')) {
-                inputs[varName] = value;
-              }
-              
-              const baseVarName = varName.split('_')[0];
-              if (!baseVarName.startsWith('tmp') && !baseVarName.startsWith('$')) {
-                state[varName] = value;
-              }
-            }
-          }
-        } catch (err) {
-          console.warn('Error parsing model string:', err);
-        }
-      }
-      
-      // Create a simplified trace
-      const trace = [
-        { location: 'initial', state: inputs },
-        { location: 'final', state }
-      ];
-      
-      return {
-        inputs,
-        trace
-      };
-    } catch (error) {
-      console.error('Error extracting counterexample:', error);
-      return null;
-    }
-  }
-  
-  /**
-   * Get effective timeout value
-   * @param {Object} options - Options with timeout
-   * @returns {number} Timeout in milliseconds
-   */
-  getEffectiveTimeout(options) {
-    // Get the effective timeout value
-    return Math.max(1000, options.timeout || this.defaultTimeout);
-  }
 }
 
-module.exports = new Z3Service();
+// Export the class instead of a singleton instance
+module.exports = Z3Service;

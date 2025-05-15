@@ -9,7 +9,8 @@ const parseRoutes = require('./routes/parseRoutes');
 const equivalenceRoutes = require('./routes/equivalenceRoutes');
 
 // Initialize Z3 service
-const z3Service = require('./services/z3Service');
+const Z3Service = require('./services/z3Service');
+const z3Service = new Z3Service();
 
 // Initialize the app
 const app = express();
@@ -48,7 +49,7 @@ async function startServer() {
     console.log('Z3 solver initialized successfully');
     
     // Start the server
-    const PORT = process.env.PORT || 3001;
+    const PORT = process.env.PORT || 3002;
     app.listen(PORT, () => {
       console.log(`Server running on port ${PORT}`);
     });
