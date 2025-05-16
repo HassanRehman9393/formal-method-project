@@ -214,14 +214,14 @@ const generateArraySMT = (req, res) => {
     
     // Check if the method exists
     if (typeof smtGenerationService.generateArraySMT === 'function') {
-      const smtScript = smtGenerationService.generateArraySMT(arrays, operations);
-      
-      return res.json({
-        success: true,
-        data: {
-          smtConstraints: smtScript
-        }
-      });
+    const smtScript = smtGenerationService.generateArraySMT(arrays, operations);
+    
+    return res.json({
+      success: true,
+      data: {
+        smtConstraints: smtScript
+      }
+    });
     } else {
       // Fallback to provide a basic SMT script
       // This is a simplified version that won't handle all cases but prevents an error

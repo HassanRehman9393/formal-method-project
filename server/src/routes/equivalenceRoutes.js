@@ -4,7 +4,8 @@
  */
 const express = require('express');
 const router = express.Router();
-const equivalenceService = require('../services/equivalenceService');
+const EquivalenceService = require('../services/equivalenceService');
+const equivalenceService = new EquivalenceService(); // Instantiate the class
 const smtController = require('../controllers/smtController');
 
 /**

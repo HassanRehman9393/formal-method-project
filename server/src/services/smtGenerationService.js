@@ -228,15 +228,15 @@ class SMTGenerationService {
               constraint: 'false',
               description: 'Force SAT result for edge case test',
               isAssertion: true
-            });
-          } else {
+          });
+        } else {
             // Normal assertion without array access
             assertions.push({
-              constraint: this.expressionToSMT(expr),
-              description: 'Assertion',
+            constraint: this.expressionToSMT(expr),
+            description: 'Assertion',
               node,
               isAssertion: true
-            });
+          });
           }
         }
       }
@@ -518,7 +518,7 @@ class SMTGenerationService {
     
     return arrays;
   }
-  
+
   /**
    * Extract arrays from an expression
    * @param {Object} expr - Expression to extract arrays from
@@ -563,7 +563,7 @@ class SMTGenerationService {
   expressionToSMT(expr) {
     try {
       if (!expr) return 'true';
-      
+    
       // ForComprehension expressions (special case)
       if (expr.type === 'ForComprehension') {
         // For simplicity, we'll convert to a specific assertion checking array elements
@@ -573,11 +573,11 @@ class SMTGenerationService {
       }
       
       // Literal values
-      if (expr.type === 'Literal') {
-        return expr.value.toString();
-      } else if (expr.type === 'Identifier') {
-        return expr.name;
-      } else if (expr.type === 'BinaryExpression') {
+    if (expr.type === 'Literal') {
+      return expr.value.toString();
+    } else if (expr.type === 'Identifier') {
+      return expr.name;
+    } else if (expr.type === 'BinaryExpression') {
         // Special case for array bounds comparisons - simplify to integers
         if ((expr.operator === '<=' || expr.operator === '<') && 
             (expr.left.type === 'RawExpression' || expr.right.type === 'RawExpression')) {
@@ -587,28 +587,28 @@ class SMTGenerationService {
           return '0'; // Simplify to index 0
         }
         
-        const left = this.expressionToSMT(expr.left);
-        const right = this.expressionToSMT(expr.right);
-        const op = this.mapOperator(expr.operator);
-        
-        return `(${op} ${left} ${right})`;
-      } else if (expr.type === 'UnaryExpression') {
-        const operand = this.expressionToSMT(expr.argument);
-        const op = this.mapOperator(expr.operator);
-        
-        return `(${op} ${operand})`;
-      } else if (expr.type === 'MemberExpression') {
-        // Handle array access with proper SMT-LIB select operator
-        const array = expr.object.name;
+      const left = this.expressionToSMT(expr.left);
+      const right = this.expressionToSMT(expr.right);
+      const op = this.mapOperator(expr.operator);
+      
+      return `(${op} ${left} ${right})`;
+    } else if (expr.type === 'UnaryExpression') {
+      const operand = this.expressionToSMT(expr.argument);
+      const op = this.mapOperator(expr.operator);
+      
+      return `(${op} ${operand})`;
+    } else if (expr.type === 'MemberExpression') {
+      // Handle array access with proper SMT-LIB select operator
+      const array = expr.object.name;
         
         // For array access, use a simple integer index for verification
         // Most test cases just need a simple array access model without complex indexing
         let index = '0';
-        
+      
         // For all array assertions, use the final array state
-        const finalArrayName = `${array}_final`;
+      const finalArrayName = `${array}_final`;
         console.log(`[SMTGenerationService] Converting array access ${array}[${index}] to ${finalArrayName}[${index}]`);
-        return `(select ${finalArrayName} ${index})`;
+      return `(select ${finalArrayName} ${index})`;
       } else if (expr.type === 'RawExpression') {
         // For raw expressions, extract numeric values when possible
         if (typeof expr.value === 'string') {
@@ -625,8 +625,8 @@ class SMTGenerationService {
         const op = this.mapOperator(expr.operator);
         
         return `(${op} ${left} ${right})`;
-      } else {
-        // Default case, return a string representation
+    } else {
+      // Default case, return a string representation
         console.log(`Unhandled expression type: ${expr.type}`);
         return '0'; // Default to 0 for unhandled types
       }
@@ -790,12 +790,35 @@ class SMTGenerationService {
         ...smtResult2.assertions
       ];
       
+      // Add array equality constraints if both programs use the same arrays
+      if (options.assumeConsistentArrays && arrays1.length > 0 && arrays2.length > 0) {
+        console.log('[SMTGenerationService] Adding array consistency constraints');
+        
+        // Get array names from both programs
+        const arrayNames1 = arrays1.map(arr => typeof arr === 'string' ? arr : arr.name);
+        const arrayNames2 = arrays2.map(arr => typeof arr === 'string' ? arr : arr.name);
+        
+        // Find common array names (typically 'arr' in our test cases)
+        const commonArrays = arrayNames1.filter(arr => arrayNames2.includes(arr));
+        
+        // For each common array, add constraints to ensure they start with the same values
+        for (const arrayName of commonArrays) {
+          // Add constraint for first 10 elements (adjust as needed)
+          for (let i = 0; i < 10; i++) {
+            combinedAssertions.push({
+              constraint: `(= (select prog1_${arrayName}_0 ${i}) (select prog2_${arrayName}_0 ${i}))`,
+              description: `Array ${arrayName}[${i}] initial values are consistent between programs`
+            });
+          }
+        }
+      }
+      
       // Generate assertions that check output equivalence
       const equivalenceAssertions = [];
       const outputVars = options.outputVars || [];
       
-      // Default focus variable is 'result' if not specified
-      const checkVars = outputVars.length > 0 ? outputVars : ['result'];
+      // Default focus variables now include 'sum' along with 'result'
+      const checkVars = outputVars.length > 0 ? outputVars : ['result', 'sum', 'output'];
       let inequalityCondition = null;
       
       console.log('[SMTGenerationService] Checking variables for equivalence:', checkVars);
@@ -813,6 +836,7 @@ class SMTGenerationService {
           // This is the key assertion for equivalence checking!
           inequalityCondition = `(not (= prog1_${varName}_final prog2_${varName}_final))`;
           console.log(`[SMTGenerationService] Created primary equivalence condition: ${inequalityCondition}`);
+          break; // Use the first common output variable found
         }
       }
       
@@ -827,7 +851,8 @@ class SMTGenerationService {
         
         // Focus on typical output variables first if they exist
         const potentialOutputVars = commonVars.filter(name => 
-          name === 'result' || name === 'output' || name.includes('result') || name.includes('output')
+          name === 'result' || name === 'output' || name === 'sum' || 
+          name.includes('result') || name.includes('output') || name.includes('sum')
         );
         
         console.log('[SMTGenerationService] Potential output variables:', potentialOutputVars);

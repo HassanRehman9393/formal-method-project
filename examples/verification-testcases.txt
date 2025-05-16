@@ -1,0 +1,50 @@
+ //Test Case 1
+x := 3;
+y := x + 1;
+assert(y > x);
+
+
+//Test Case 2:
+x := 0;
+y := x - 1;
+assert(y >= 0);
+
+//Test Case 3:
+arr[0] := 5;
+arr[1] := 2;
+assert(arr[0] < arr[1]);
+
+
+//Test Case 4:
+x := 0;
+while (x < 4) {
+    x := x + 1;
+}
+assert(x == 4);
+
+
+//Test Case 5:
+x := input;
+assert(x == 0 || x > 0);
+
+
+//Test Case 6:
+for (i := 0; i < n; i := i + 1) {
+    for (j := 0; j < n - i - 1; j := j + 1) {
+        if (arr[j] > arr[j+1]) {
+            temp := arr[j];
+            arr[j] := arr[j+1];
+            arr[j+1] := temp;
+        }
+    }
+}
+assert(for (i in range(n-1)): arr[i] <= arr[i+1]);
+
+
+//Test Case 7:
+x := 2;
+if (x > 5) {
+    y := 100; // Dead code
+}
+assert(x == 2);
+

@@ -1,5 +1,0 @@
-x := 2;
-if (x > 5) {
-    y := 100; // Dead code
-}
-assert(x == 2); 

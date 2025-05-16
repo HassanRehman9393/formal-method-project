@@ -345,8 +345,8 @@ class Z3Service {
           // Handle arrays (partial information from the model)
           const arrayValues = {};
           
-          // Find array entries in the model
-          for (let i = 0; i < 10; i++) {  // Limit to checking first 10 indices
+          // Find array entries in the model - check more indices for array-based programs
+          for (let i = 0; i < 20; i++) {  // Increased from 10 to 20 indices
             try {
               const indexValue = value.eval(i);
               if (indexValue !== undefined) {
@@ -359,6 +359,11 @@ class Z3Service {
           
           if (isFinalVar) {
             counterexample.arrays[baseVarName] = arrayValues;
+            
+            // Also add a flattened representation for each array element for easier access
+            for (const [idx, val] of Object.entries(arrayValues)) {
+              counterexample.state[`${baseVarName}[${idx}]`] = val;
+            }
           }
         } else {
           // Handle regular variables

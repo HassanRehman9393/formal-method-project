@@ -526,7 +526,7 @@ function optimizeSSA(ssaCode) {
               inDeadCode = true;
               explanation.push(`Dead code - Condition is always FALSE: ${varName}_${version}=${constants[varKey]} ${operator} ${value}`);
               line = `if (false) { // DEAD CODE: ${leftVal} ${operator} ${rightVal} is FALSE`;
-            } else {
+    } else {
               explanation.push(`Constant condition - Always TRUE: ${varName}_${version}=${constants[varKey]} ${operator} ${value}`);
               line = `if (true) { // Optimized: ${leftVal} ${operator} ${rightVal} is TRUE`;
             }

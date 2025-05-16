@@ -3,10 +3,10 @@
  * Translates programs in SSA form to SMT constraints
  */
 
-/**
- * Translate SSA AST to SMT constraints
+  /**
+   * Translate SSA AST to SMT constraints
  * @param {Object} ast - AST in SSA form
- * @param {Object} options - Translation options
+   * @param {Object} options - Translation options
  * @returns {Object} SMT translation result
  */
 exports.translate = async function(ast, options = {}) {
@@ -288,13 +288,13 @@ function translateAssignment(statement, context) {
     }
     
     return result;
-  } catch (error) {
+    } catch (error) {
     console.error('Error in translateAssignment:', error);
     return result;
+    }
   }
-}
 
-/**
+  /**
  * Translate if statement to SMT
  * @param {Object} statement - If statement
  * @param {Object} context - Translation context

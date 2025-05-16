@@ -1,0 +1,56 @@
+Program A: Bubble Sort
+
+for (i := 0; i < n; i := i + 1) {
+    for (j := 0; j < n - i - 1; j := j + 1) {
+        if (arr[j] > arr[j+1]) {
+            temp := arr[j];
+            arr[j] := arr[j+1];
+            arr[j+1] := temp;
+        }
+    }
+}
+
+
+Program B: Selection Sort
+
+for (i := 0; i < n - 1; i := i + 1) {
+    min_idx := i;
+    for (j := i + 1; j < n; j := j + 1) {
+        if (arr[j] < arr[min_idx]) {
+            min_idx := j;
+        }
+    }
+    temp := arr[min_idx];
+    arr[min_idx] := arr[i];
+    arr[i] := temp;
+}
+
+
+Test Case 2: Equivalent Sum – Iterative vs. Unrolled
+
+sum := 0;
+for (i := 0; i < 4; i := i + 1) {
+    sum := sum + arr[i];
+}
+
+
+sum := 0;
+sum := sum + arr[0];
+sum := sum + arr[1];
+sum := sum + arr[2];
+sum := sum + arr[3];
+
+
+
+Test Case 3: Not Equivalent – Missing Condition
+x := input;
+if (x < 5) {
+    y := x + 1;
+} else {
+    y := x - 1;
+}
+
+
+
+x := input;
+y := x + 1;
